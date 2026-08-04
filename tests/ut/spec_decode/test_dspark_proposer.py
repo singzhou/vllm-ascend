@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from vllm.config import CUDAGraphMode
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
@@ -49,7 +50,11 @@ class _DSparkProposerTestBase:
         """Build the minimal config consumed by the DSpark initializer."""
         draft_model_config = SimpleNamespace(hf_config=hf_config, get_hidden_size=lambda: _HIDDEN_SIZE)
         return SimpleNamespace(
-            speculative_config=SimpleNamespace(draft_sample_method="greedy", draft_model_config=draft_model_config)
+            speculative_config=SimpleNamespace(draft_sample_method="greedy", draft_model_config=draft_model_config),
+            parallel_config=SimpleNamespace(data_parallel_size=1, use_sequence_parallel_moe=False, is_moe_model=False),
+            compilation_config=SimpleNamespace(cudagraph_mode=CUDAGraphMode.NONE),
+            model_config=SimpleNamespace(enforce_eager=True),
+            scheduler_config=SimpleNamespace(max_num_batched_tokens=_MAX_NUM_TOKENS),
         )
 
     @classmethod
@@ -347,7 +352,9 @@ class TestDSparkInitialization(_DSparkProposerTestBase):
             block_size=_NUM_SPECULATIVE_TOKENS,
             hf_config=hf_config,
         )
-        expected_max_query_tokens = _MAX_BATCH_SIZE * expected_num_query_per_req
+        # max_query_tokens is sized for capture buckets (1+N step), not
+        # num_query_per_req alone, to accommodate ACLGraph padding.
+        expected_max_query_tokens = _MAX_BATCH_SIZE * (1 + _NUM_SPECULATIVE_TOKENS)
         assert proposer.sample_from_anchor is expected_sample_from_anchor
         assert proposer.num_query_per_req == expected_num_query_per_req
         assert proposer.max_query_tokens == expected_max_query_tokens
@@ -483,7 +490,8 @@ class TestDSparkInitValidation:
         proposer = AscendDSparkProposer(vllm_config, device)
 
         blk = 1 + num_spec
-        max_query_tokens = max_batch * num_spec
+        # max_query_tokens is sized for capture buckets (1+N step).
+        max_query_tokens = max_batch * (1 + num_spec)
         # DSpark-specific draft / seed buffers.
         assert proposer._dspark_draft_buffer.shape == (max_batch, blk)
         assert proposer._dspark_draft_buffer.dtype == torch.int64
@@ -493,8 +501,12 @@ class TestDSparkInitValidation:
         assert proposer.hidden_size == hidden
         assert proposer.hidden_states.shape == (max_num_tokens, hidden)
         assert proposer._dflash_hidden_states.shape == (max_num_tokens, hidden)
-        # DSpark runs eager only (Ascend cudagraph unsupported on this path).
-        assert proposer.use_cuda_graph is False
+        # DSpark ACLGraph is now supported; use_cuda_graph follows the same
+        # logic as AscendSpecDecodeBaseProposer (runner._use_aclgraph() and
+        # speculative_config.enforce_eager).  The stub parent init does not set
+        # use_cuda_graph, so it defaults to False in this unit test (no real
+        # runner).  A real runner with ACLGraph enabled would yield True.
+        assert not hasattr(proposer, "use_cuda_graph") or proposer.use_cuda_graph is False
         # anchor-first: N query tokens per request, no bonus token (unlike
         # DFlash's 1+N).
         assert proposer.max_query_tokens == max_query_tokens
@@ -732,3 +744,516 @@ class TestKernelBlockSizeResolution(_DSparkProposerTestBase):
 
         assert kernel[1,].call_args.kwargs["block_size"] == expected
 # fmt: on
+
+
+class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
+    """Tests for DSpark dummy_run with ACLGraph FULL mode enabled.
+
+    Verifies that when use_cuda_graph=True and aclgraph_runtime_mode=FULL,
+    the dummy_run constructs proper drafting metadata for graph capture.
+    """
+
+    @staticmethod
+    def _make_proposer_with_graph_support(
+        *,
+        max_num_tokens: int,
+        num_reqs: int,
+        block_size: int,
+        hf_config: SimpleNamespace | None = None,
+        use_cuda_graph: bool = True,
+    ):
+        """Create a DSpark proposer with use_cuda_graph set to the given value."""
+        proposer = _DSparkProposerTestBase._make_proposer(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            hf_config=hf_config,
+        )
+        proposer.use_cuda_graph = use_cuda_graph
+        # Attributes that the real llm_base_proposer.__init__ sets but the
+        # stub mock_parent_init skips.
+        vllm_config = _DSparkProposerTestBase._make_vllm_config(hf_config or SimpleNamespace())
+        if not hasattr(proposer, "vllm_config"):
+            proposer.vllm_config = vllm_config
+        if not hasattr(proposer, "_runnable"):
+            proposer._runnable = lambda **kw: None
+        if not hasattr(proposer, "token_indices_to_sample"):
+            proposer.token_indices_to_sample = torch.zeros(max_num_tokens, dtype=torch.int32)
+        # _get_positions checks uses_mrope, uses_xdrope_dim, etc.
+        if not hasattr(proposer, "uses_mrope"):
+            proposer.uses_mrope = False
+        if not hasattr(proposer, "uses_xdrope_dim"):
+            proposer.uses_xdrope_dim = 0
+        if not hasattr(proposer, "draft_uses_xdrope_dim"):
+            proposer.draft_uses_xdrope_dim = 0
+        # query_start_loc buffer (CpuGpuBuffer-like) needed by dummy_run's
+        # _pad_query_start_loc_for_fia call.
+        if not hasattr(proposer, "query_start_loc"):
+            buf_size = num_reqs + 2  # max_num_reqs + 2 for padding
+            cpu_buf = torch.zeros(buf_size, dtype=torch.int32, pin_memory=True)
+            gpu_buf = torch.zeros(buf_size, dtype=torch.int32)
+            buf = SimpleNamespace(
+                cpu=cpu_buf,
+                gpu=gpu_buf,
+                np=cpu_buf.numpy(),
+                copy_to_gpu=lambda: gpu_buf.copy_(cpu_buf, non_blocking=True),
+            )
+            proposer.query_start_loc = buf
+        return proposer
+
+    @staticmethod
+    def _make_runner_mock(num_reqs: int):
+        """Create a minimal runner mock for dummy_run."""
+        runner = MagicMock()
+        runner._sync_metadata_across_dp = MagicMock(
+            side_effect=lambda n, **kw: (n, None, None)
+        )
+        runner.optimistic_seq_lens_cpu = torch.ones(num_reqs, dtype=torch.int32)
+        runner.seq_lens = torch.ones(num_reqs, dtype=torch.int32) * 128
+        # input_batch.block_table[gid].get_device_tensor()[:num_reqs]
+        block_table_tensor = torch.zeros((num_reqs, 16), dtype=torch.int32)
+        mock_bt = MagicMock()
+        mock_bt.get_device_tensor.return_value = block_table_tensor
+        runner.input_batch = MagicMock()
+        runner.input_batch.block_table = {0: mock_bt}
+        runner.attn_groups = [MagicMock()]
+        # _pad_query_start_loc_for_fia: mirrors the real implementation for
+        # FULL mode (adds a dummy request if last qsl entry < num_tokens).
+        runner.uniform_decode_query_len = 1  # not used in FULL branch
+        runner.compilation_config = SimpleNamespace(cudagraph_mode=CUDAGraphMode.FULL)
+
+        def _pad_query_start_loc_for_fia(
+            query_start_loc, num_tokens_padded, num_reqs_padded, num_reqs,
+            cudagraph_runtime_mode=None, batch_desc_num_reqs=None,
+        ):
+            if cudagraph_runtime_mode == CUDAGraphMode.FULL:
+                num_reqs_padded = num_reqs
+            else:
+                num_reqs_padded = batch_desc_num_reqs if batch_desc_num_reqs is not None else num_reqs
+            if query_start_loc.np[num_reqs_padded] < num_tokens_padded:
+                query_start_loc.np[num_reqs_padded + 1] = num_tokens_padded
+                num_reqs_padded = num_reqs_padded + 1
+            query_start_loc.copy_to_gpu()
+            return num_reqs_padded
+
+        runner._pad_query_start_loc_for_fia = _pad_query_start_loc_for_fia
+        return runner
+
+    def test_eager_mode_downgrades_to_none(self):
+        """When use_cuda_graph=False, aclgraph_runtime_mode is downgraded to NONE."""
+        num_reqs, block_size, max_num_tokens = 4, 5, 256
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=False,
+        )
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        # Override _runnable to track how it's called
+        captured_kwargs = {}
+
+        def capture_runnable(**kwargs):
+            captured_kwargs.update(kwargs)
+
+        proposer._runnable = capture_runnable
+        proposer._dflash_num_context = 0
+
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc:
+            mock_gfc.return_value = MagicMock(cudagraph_runtime_mode=CUDAGraphMode.NONE)
+            proposer.dummy_run(
+                num_tokens=num_reqs * block_size,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        # In eager mode, _runnable should receive empty metadata
+        assert captured_kwargs["multi_steps_attn_metadata"] == []
+
+    def test_full_mode_builds_drafting_metadata(self):
+        """When use_cuda_graph=True and FULL mode, drafting metadata is built."""
+        num_reqs, block_size, max_num_tokens = 4, 5, 256
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=True,
+        )
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        # Mock the metadata builder
+        mock_metadata = MagicMock()
+        mock_metadata.attn_mask = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_graph_capture.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        captured_kwargs = {}
+
+        def capture_runnable(**kwargs):
+            captured_kwargs.update(kwargs)
+
+        proposer._runnable = capture_runnable
+        proposer._dflash_num_context = 0
+        # Need _update_full_graph_params to not fail
+        proposer.update_stream = MagicMock()
+
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc, \
+             patch("vllm_ascend.spec_decode.dspark_proposer._EXTRA_CTX", capturing=True):
+            mock_gfc.return_value = MagicMock(cudagraph_runtime_mode=CUDAGraphMode.FULL)
+            proposer.dummy_run(
+                num_tokens=num_reqs * block_size,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        # build_for_graph_capture should have been called (DSpark dense GQA
+        # uses the same capture entry point as DFlash).
+        mock_builder.build_for_graph_capture.assert_called_once()
+        call_args = mock_builder.build_for_graph_capture.call_args
+        # Second positional arg should be AscendAttentionState.ChunkedPrefill
+        assert len(call_args.args) > 1
+        assert call_args.args[1] == AscendAttentionState.ChunkedPrefill
+
+        # _runnable should receive non-empty metadata
+        assert len(captured_kwargs["multi_steps_attn_metadata"]) == 1
+
+    def test_full_mode_uses_num_query_per_req(self):
+        """DSpark uses self.num_query_per_req (not 1+N like dFlash)."""
+        num_reqs, block_size, max_num_tokens = 4, 3, 256
+        # sample_from_anchor=True => num_query_per_req = N = block_size
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=True,
+        )
+        assert proposer.num_query_per_req == block_size  # anchor-first: N
+
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_graph_capture.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        proposer._runnable = lambda **kw: None
+        proposer._dflash_num_context = 0
+
+        num_tokens = num_reqs * block_size  # = 12, matches num_reqs * num_query_per_req
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+            proposer.dummy_run(
+                num_tokens=num_tokens,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        # Check that build_for_graph_capture received common_attn_metadata with
+        # DSpark's num_query_per_req geometry.
+        # When num_tokens == num_reqs * num_query_per_req (no padding gap),
+        # query_start_loc is arange * num_query_per_req (no dummy request).
+        call_args = mock_builder.build_for_graph_capture.call_args
+        common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        expected_qsl = torch.arange(num_reqs + 1, dtype=torch.int32) * block_size
+        assert torch.equal(common.query_start_loc, expected_qsl)
+
+    def test_bonus_anchor_uses_N_plus_1(self):
+        """With bonus-anchor, num_query_per_req = N + 1."""
+        num_reqs, block_size, max_num_tokens = 4, 3, 256
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            hf_config=SimpleNamespace(dspark_bonus_anchor=True),
+            use_cuda_graph=True,
+        )
+        assert proposer.num_query_per_req == 1 + block_size
+
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_graph_capture.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        proposer._runnable = lambda **kw: None
+        proposer._dflash_num_context = 0
+
+        num_tokens = num_reqs * (1 + block_size)  # = 16, matches num_query_total
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+            proposer.dummy_run(
+                num_tokens=num_tokens,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        call_args = mock_builder.build_for_graph_capture.call_args
+        common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        # When num_tokens == num_reqs * num_query_per_req, no padding gap
+        expected_qsl = torch.arange(num_reqs + 1, dtype=torch.int32) * (1 + block_size)
+        assert torch.equal(common.query_start_loc, expected_qsl)
+
+    def test_full_mode_sets_chunked_prefill_state(self):
+        """Capture metadata must use ChunkedPrefill state."""
+        num_reqs, block_size, max_num_tokens = 4, 5, 256
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=True,
+        )
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_graph_capture.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        proposer._runnable = lambda **kw: None
+        proposer._dflash_num_context = 0
+
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+            proposer.dummy_run(
+                num_tokens=num_reqs * block_size,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        # attn_state should be set to ChunkedPrefill on the metadata
+        assert mock_metadata.attn_state == AscendAttentionState.ChunkedPrefill
+        # attn_mask should be cleared (DSpark is non-causal)
+        assert mock_metadata.attn_mask is None
+
+    def test_per_group_metadata_for_multiple_groups(self):
+        """With multiple draft KV groups, each group gets its own metadata."""
+        num_reqs, block_size, max_num_tokens = 4, 5, 256
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=True,
+        )
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        # Add a second draft attention group
+        gid1 = proposer.draft_attn_groups[0].kv_cache_group_id
+        gid2 = gid1 + 1
+        second_group = SimpleNamespace(
+            kv_cache_group_id=gid2,
+            kv_cache_spec=SimpleNamespace(block_size=block_size),
+            layer_names=["L1"],
+        )
+        mock_builder2 = MagicMock()
+        mock_metadata2 = MagicMock()
+        mock_builder2.build_for_graph_capture.return_value = mock_metadata2
+        second_group.get_metadata_builder = MagicMock(return_value=mock_builder2)
+
+        proposer.draft_attn_groups = [proposer.draft_attn_groups[0], second_group]
+        proposer._per_group_query_slot_mapping_buffers[gid2] = torch.zeros(
+            max_num_tokens, dtype=torch.int32
+        )
+        proposer._per_group_block_table_buffers[gid2] = torch.zeros(
+            (num_reqs, 16), dtype=torch.int32
+        )
+
+        # Setup first builder mock too
+        mock_metadata1 = MagicMock()
+        mock_builder1 = MagicMock()
+        mock_builder1.build_for_graph_capture.return_value = mock_metadata1
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder1)
+
+        captured_kwargs = {}
+
+        def capture_runnable(**kwargs):
+            captured_kwargs.update(kwargs)
+
+        proposer._runnable = capture_runnable
+        proposer._dflash_num_context = 0
+
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+            proposer.dummy_run(
+                num_tokens=num_reqs * block_size,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        # Both builders should have been called
+        mock_builder1.build_for_graph_capture.assert_called_once()
+        mock_builder2.build_for_graph_capture.assert_called_once()
+
+        # The per_layer_attn_metadata should contain layers from both groups
+        metadata = captured_kwargs["multi_steps_attn_metadata"][0]
+        # Should have entries for layers from both groups
+        assert "L0" in metadata
+        assert "L1" in metadata
+
+    def test_full_mode_query_start_loc_padded_to_num_query_tokens(self):
+        """When capture bucket pads num_query_tokens beyond
+        num_reqs * num_query_per_req, _pad_query_start_loc_for_fia adds a
+        dummy request so that query_start_loc[-1] equals num_input_tokens and
+        actual_seq_lengths_q[-1] matches the graph-params key."""
+        num_reqs, num_spec, max_num_tokens = 2, 7, 256
+        # sample_from_anchor=True => num_query_per_req = N = 7
+        # num_query_total = 2*7 = 14, but capture bucket = 16 (1+N=8 per req * 2)
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=num_spec,
+            use_cuda_graph=True,
+        )
+        assert proposer.num_query_per_req == num_spec
+
+        proposer.runner = self._make_runner_mock(num_reqs)
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_graph_capture.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        proposer._runnable = lambda **kw: None
+        proposer._dflash_num_context = 0
+
+        # num_tokens = 16 (padded to capture bucket), num_reqs = 2
+        padded_num_tokens = num_reqs * (1 + num_spec)  # = 16
+        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
+             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+            proposer.dummy_run(
+                num_tokens=padded_num_tokens,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.FULL,
+            )
+
+        call_args = mock_builder.build_for_graph_capture.call_args
+        common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        # _pad_query_start_loc_for_fia adds a dummy request, so
+        # num_reqs_padded = 3 and query_start_loc has 4 entries.
+        # The last entry equals padded_num_tokens (16).
+        assert common.query_start_loc[-1].item() == padded_num_tokens
+        # The first request's boundary stays at num_query_per_req = 7.
+        assert common.query_start_loc[1].item() == num_spec
+        # num_reqs should be padded (3, including dummy request).
+        assert common.num_reqs == num_reqs + 1
+
+
+class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):
+    """In FULL graph mode, ``_pad_query_start_loc_for_fia`` (called in
+    ``_propose``) pads ``query_start_loc`` before ``build_draft_attn_metadata``
+    is invoked.  The DSpark branch in ``build_draft_attn_metadata`` must pass
+    through the already-padded ``query_start_loc`` without modification."""
+
+    def test_query_start_loc_passed_through_in_graph_mode(self):
+        """query_start_loc padded by _pad_query_start_loc_for_fia is preserved."""
+        num_reqs, num_spec = 2, 7
+        proposer = self._make_proposer(
+            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+        )
+        proposer.use_cuda_graph = True
+        proposer.use_compress = False
+        proposer.method = "dspark"
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_drafting.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        num_input_tokens = 16  # padded to capture bucket
+        num_actual_tokens = num_reqs * num_spec  # = 14
+
+        # Simulate the query_start_loc after _pad_query_start_loc_for_fia
+        # adds a dummy request: [0, 7, 14, 16] with num_reqs=3
+        num_reqs_padded = num_reqs + 1
+        qsl = torch.tensor([0, 7, 14, 16], dtype=torch.int32)
+        qsl_cpu = torch.tensor([0, 7, 14, 16], dtype=torch.int32)
+        common = SimpleNamespace(
+            num_reqs=num_reqs_padded,
+            query_start_loc=qsl,
+            query_start_loc_cpu=qsl_cpu,
+            block_table_tensor=torch.zeros((num_reqs_padded, 16), dtype=torch.int32),
+            num_input_tokens=num_input_tokens,
+        )
+
+        proposer.build_draft_attn_metadata(common, num_input_tokens, num_actual_tokens)
+
+        call_args = mock_builder.build_for_drafting.call_args
+        meta_common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        # query_start_loc is passed through unchanged (already padded).
+        assert meta_common.query_start_loc[num_reqs_padded].item() == num_input_tokens
+
+    def test_query_start_loc_not_modified_when_already_matches(self):
+        """When query_start_loc already matches, no modification occurs."""
+        num_reqs, num_spec = 2, 7
+        proposer = self._make_proposer(
+            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+        )
+        proposer.use_cuda_graph = True
+        proposer.use_compress = False
+        proposer.method = "dspark"
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_drafting.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        # Simulate bonus_anchor where num_query_per_req = N+1 = 8,
+        # and num_input_tokens = 16 = 2*8 (no padding gap, no dummy request).
+        num_query_per_req = num_spec + 1
+        num_input_tokens = num_reqs * num_query_per_req  # = 16
+        num_actual_tokens = num_input_tokens
+
+        qsl = torch.arange(num_reqs + 1, dtype=torch.int32) * num_query_per_req  # [0, 8, 16]
+        qsl_cpu = qsl.clone()
+        common = SimpleNamespace(
+            num_reqs=num_reqs,
+            query_start_loc=qsl,
+            query_start_loc_cpu=qsl_cpu,
+            block_table_tensor=torch.zeros((num_reqs, 16), dtype=torch.int32),
+            num_input_tokens=num_input_tokens,
+        )
+
+        proposer.build_draft_attn_metadata(common, num_input_tokens, num_actual_tokens)
+
+        call_args = mock_builder.build_for_drafting.call_args
+        meta_common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        # No modification needed — last element already equals num_input_tokens.
+        assert meta_common.query_start_loc[num_reqs].item() == num_input_tokens
+
+    def test_no_padding_in_eager_mode(self):
+        """In eager mode, query_start_loc is not padded."""
+        num_reqs, num_spec = 2, 7
+        proposer = self._make_proposer(
+            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+        )
+        proposer.use_cuda_graph = False
+        proposer.use_compress = False
+        proposer.method = "dspark"
+
+        mock_metadata = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build_for_drafting.return_value = mock_metadata
+        proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
+
+        num_input_tokens = 16
+        num_actual_tokens = 14
+
+        qsl = torch.arange(num_reqs + 1, dtype=torch.int32) * num_spec  # [0, 7, 14]
+        qsl_cpu = qsl.clone()
+        common = SimpleNamespace(
+            num_reqs=num_reqs,
+            query_start_loc=qsl,
+            query_start_loc_cpu=qsl_cpu,
+            block_table_tensor=torch.zeros((num_reqs, 16), dtype=torch.int32),
+            num_input_tokens=num_input_tokens,
+        )
+
+        proposer.build_draft_attn_metadata(common, num_input_tokens, num_actual_tokens)
+
+        call_args = mock_builder.build_for_drafting.call_args
+        meta_common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
+        # In eager mode, query_start_loc should NOT be padded.
+        assert meta_common.query_start_loc[num_reqs].item() == num_reqs * num_spec  # = 14
