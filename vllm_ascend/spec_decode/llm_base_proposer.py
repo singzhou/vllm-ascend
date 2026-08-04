@@ -822,14 +822,29 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             num_reqs = common_attn_metadata.query_start_loc.shape[0]
             self.query_start_loc.gpu[:num_reqs].copy_(common_attn_metadata.query_start_loc)
             self.query_start_loc.cpu[:num_reqs].copy_(common_attn_metadata.query_start_loc_cpu)
-            num_reqs_padded = self.runner._pad_query_start_loc_for_fia(
-                self.query_start_loc,
-                num_input_tokens,
-                batch_descriptor.num_reqs if batch_descriptor.num_reqs is not None else common_attn_metadata.num_reqs,
-                common_attn_metadata.num_reqs,
-                aclgraph_runtime_mode,
-                batch_descriptor.num_reqs,
-            )
+            if self.method == "dspark":
+                # DSpark cannot use _pad_query_start_loc_for_fia because that
+                # function assumes uniform_decode_query_len (1 + N) as the
+                # per-request step size, but DSpark's num_query_per_req is N
+                # (sample_from_anchor).  When cudagraph_mode is
+                # FULL_DECODE_ONLY, _pad enters the uniform-batch branch
+                # (num_tokens == num_reqs * uniform_decode_query_len) and
+                # skips padding, leaving actual_seq_lengths_q[-1] short of
+                # the bucket size.  Apply virtual-request padding manually.
+                num_reqs_padded = common_attn_metadata.num_reqs
+                if self.query_start_loc.np[num_reqs_padded] < num_input_tokens:
+                    self.query_start_loc.np[num_reqs_padded + 1] = num_input_tokens
+                    num_reqs_padded += 1
+                self.query_start_loc.copy_to_gpu()
+            else:
+                num_reqs_padded = self.runner._pad_query_start_loc_for_fia(
+                    self.query_start_loc,
+                    num_input_tokens,
+                    batch_descriptor.num_reqs if batch_descriptor.num_reqs is not None else common_attn_metadata.num_reqs,
+                    common_attn_metadata.num_reqs,
+                    aclgraph_runtime_mode,
+                    batch_descriptor.num_reqs,
+                )
             common_attn_metadata.num_reqs = num_reqs_padded
             common_attn_metadata.query_start_loc = self.query_start_loc.gpu[: num_reqs_padded + 1]
             common_attn_metadata.query_start_loc_cpu = self.query_start_loc.cpu[: num_reqs_padded + 1]

@@ -357,25 +357,34 @@ class AscendDSparkProposer(AscendDflashProposer):
         multi_steps_attn_metadata: list[dict[str, Any]] = []
         if aclgraph_runtime_mode == CUDAGraphMode.FULL and len(self.draft_attn_groups) > 0:
             # DSpark's num_query_per_req (= N) does not divide evenly into
-            # capture buckets (step = 1 + N).  Use the same virtual-request
-            # padding as the replay path (_pad_query_start_loc_for_fia) so that
-            # capture and replay produce the same number of request boundaries
-            # in actual_seq_lengths_q.  A mismatch would cause the FIA kernel
-            # to receive an incorrect number of segments during graph-task
-            # update, breaking attention accuracy.
+            # capture buckets (step = 1 + N = uniform_decode_query_len), so
+            # num_reqs * num_query_per_req < num_input_tokens (the padded
+            # bucket size).  We need a virtual-request padding entry in
+            # query_start_loc so that actual_seq_lengths_q[-1] equals
+            # num_input_tokens, satisfying the FIA TND-layout constraint.
+            #
+            # _pad_query_start_loc_for_fia cannot be used here because it
+            # assumes the uniform-decode step size (1 + N) for its
+            # arithmetic, which does not match DSpark's actual query geometry
+            # (N per request).  When cudagraph_mode is FULL_DECODE_ONLY,
+            # _pad_query_start_loc_for_fia enters the uniform-batch branch
+            # (num_tokens == num_reqs * uniform_decode_query_len) and does
+            # nothing, leaving actual_seq_lengths_q[-1] short.
+            #
+            # Instead, manually add a virtual request: set
+            # query_start_loc[num_reqs] = num_input_tokens so that
+            # actual_seq_lengths_q gains a trailing entry equal to the
+            # bucket size.
             qsl_cpu = (
                 torch.from_numpy(self.token_arange_np[: num_reqs + 1]).clone() * self.num_query_per_req
             ).to(torch.int32)
             self.query_start_loc.cpu[: num_reqs + 1].copy_(qsl_cpu)
+            # Add virtual-request padding
+            num_reqs_padded = num_reqs
+            if self.query_start_loc.np[num_reqs] < num_input_tokens:
+                self.query_start_loc.np[num_reqs + 1] = num_input_tokens
+                num_reqs_padded = num_reqs + 1
             self.query_start_loc.copy_to_gpu()
-            num_reqs_padded = self.runner._pad_query_start_loc_for_fia(
-                self.query_start_loc,
-                num_input_tokens,
-                num_reqs,
-                num_reqs,
-                aclgraph_runtime_mode,
-                num_reqs,
-            )
 
             per_layer_attn_metadata: dict[str, Any] = {}
             for attn_group in self.draft_attn_groups:
