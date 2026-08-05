@@ -24,7 +24,6 @@ import torch_npu
 import vllm.envs as envs_vllm
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
-from vllm.logger import logger
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
     AttentionBackend,
@@ -68,11 +67,6 @@ from vllm_ascend.utils import is_950, weak_ref_tensors
 # default max value of sliding window size
 SWA_INT_MAX = 2147483647
 _ATTN_KEYS_BUFFER = None
-
-
-def _is_dspark_draft_graph(vllm_config: VllmConfig) -> bool:
-    speculative_config = getattr(vllm_config, "speculative_config", None)
-    return _EXTRA_CTX.is_draft_model and getattr(speculative_config, "method", None) == "dspark"
 
 
 @register_backend(AttentionBackendEnum.CUSTOM, "ASCEND")
@@ -573,21 +567,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             events = graph_params.events[num_tokens]
             graph_param_count = len(captured_attn_params)
             workspace = graph_params.workspaces.get(num_tokens)
-            if _is_dspark_draft_graph(vllm_config) and (
-                not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
-            ):
-                captured_layer_names = [
-                    param.layer_name if isinstance(param, PagedAttentionGraphParam) else param[-1]
-                    for param in captured_attn_params
-                ]
-                logger.info(
-                    "[dspark_diag][graph_update] graph_tokens=%d "
-                    "captured_ops=%d captured_layers=%s runtime_keys=%s",
-                    num_tokens,
-                    graph_param_count,
-                    captured_layer_names,
-                    draft_attn_key_steps,
-                )
             if _EXTRA_CTX.is_draft_model:
                 if graph_param_count > len(draft_attn_key_steps):
                     repeat_count = cdiv(graph_param_count, len(draft_attn_key_steps))
@@ -737,21 +716,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             events = graph_params.events[num_tokens]
             graph_param_count = len(captured_attn_params)
             workspace = graph_params.workspaces.get(num_tokens)
-            if _is_dspark_draft_graph(vllm_config) and (
-                not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
-            ):
-                captured_layer_names = [
-                    param.layer_name if isinstance(param, PagedAttentionGraphParam) else param[-1]
-                    for param in captured_attn_params
-                ]
-                logger.info(
-                    "[dspark_diag][graph_update] graph_tokens=%d "
-                    "captured_ops=%d captured_layers=%s runtime_keys=%s",
-                    num_tokens,
-                    graph_param_count,
-                    captured_layer_names,
-                    draft_attn_key_steps,
-                )
             if _EXTRA_CTX.is_draft_model:
                 if graph_param_count > len(draft_attn_key_steps):
                     repeat_count = cdiv(graph_param_count, len(draft_attn_key_steps))
@@ -1021,8 +985,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )  # type: ignore
         else:
             attn_params = attn_params + (None, None, None, None)  # type: ignore
-        track_layer_name = self._use_layer_aware_fia_graph_replay or _is_dspark_draft_graph(self.vllm_config)
-        layer_name = self._graph_metadata_layer_name(layer) if track_layer_name else None
+        layer_name = self._graph_metadata_layer_name(layer) if self._use_layer_aware_fia_graph_replay else None
         attn_params = attn_params + (layer_name,)  # type: ignore
         graph_params.attn_params[num_tokens].append(attn_params)
 

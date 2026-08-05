@@ -26,15 +26,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
 from vllm.config import CUDAGraphMode
 from vllm.forward_context import BatchDescriptor
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
-from vllm_ascend.patch.worker.patch_qwen3_dflash import (
-    _copy_cached_context_edge_rows,
-    _copy_context_edge_rows,
-)
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
 from vllm_ascend.spec_decode.dspark_proposer import AscendDSparkProposer
 from vllm_ascend.spec_decode.llm_base_proposer import AscendSpecDecodeBaseProposer
@@ -383,80 +378,6 @@ class TestDSparkInitialization(_DSparkProposerTestBase):
         assert proposer._context_slot_mapping_buffers[0] is group_1
         assert proposer._context_slot_mapping_buffers[1] is group_0
         assert proposer._context_slot_mapping_buffers[2] is group_1
-
-
-class TestDSparkGraphProbes(_DSparkProposerTestBase):
-    """Regression coverage for graph-safe DSpark accuracy probes."""
-
-    def test_copy_probe_copies_only_bounded_prefix(self):
-        dst = torch.full((2, 3), -1.0)
-        src = torch.arange(20, dtype=torch.float32).reshape(4, 5)
-
-        AscendDSparkProposer._dspark_diag_copy_probe(dst, src)
-
-        assert torch.equal(dst, src[:2, :3])
-
-    def test_context_edge_helpers_capture_projection_and_cache(self):
-        projected = torch.arange(4 * 2 * 4, dtype=torch.float32).reshape(4, 2, 4)
-        projected_probe = torch.zeros((1, 2, 5), dtype=torch.float32)
-        _copy_context_edge_rows(projected_probe, 0, projected)
-        assert torch.equal(projected_probe[0, 0, :5], projected[0].reshape(-1)[:5])
-        assert torch.equal(projected_probe[0, 1, :5], projected[-1].reshape(-1)[:5])
-
-        cache = torch.arange(4 * 2 * 2 * 4, dtype=torch.float32).reshape(4, 2, 2, 4)
-        slots = torch.tensor([1, 6], dtype=torch.int32)
-        cache_probe = torch.zeros((1, 2, 5), dtype=torch.float32)
-        _copy_cached_context_edge_rows(cache_probe, 0, cache, slots)
-        expected = cache.reshape(8, -1).index_select(0, slots.to(torch.long))[:, :5]
-        assert torch.equal(cache_probe[0], expected)
-
-    def test_installs_per_layer_probe_buffers_and_hooks(self):
-        class FakeSelfAttention(nn.Module):
-            def __init__(self, layer_name: str):
-                super().__init__()
-                self.attn = nn.Identity()
-                self.attn.layer_name = layer_name
-
-            def forward(self, positions, hidden_states):
-                del positions
-                return self.attn(hidden_states)
-
-        class FakeLayer(nn.Module):
-            def __init__(self, layer_name: str):
-                super().__init__()
-                self.self_attn = FakeSelfAttention(layer_name)
-
-            def forward(self, positions, hidden_states, residual):
-                hidden_states = self.self_attn(positions, hidden_states)
-                if residual is None:
-                    residual = hidden_states
-                return hidden_states, residual
-
-        class FakeBackbone(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.layers = nn.ModuleList([FakeLayer("L0"), FakeLayer("L1")])
-                self.norm = nn.Identity()
-
-        proposer = self._make_proposer(
-            max_num_tokens=_MAX_NUM_TOKENS,
-            num_reqs=1,
-            block_size=_NUM_SPECULATIVE_TOKENS,
-        )
-        proposer.model = nn.Module()
-        proposer.model.model = FakeBackbone()
-
-        proposer._install_dspark_graph_probes()
-
-        assert proposer._dspark_diag_layer_names == ["L0", "L1"]
-        assert proposer._dspark_diag_fia_output_probes.shape == (2, 3, 8)
-        assert proposer._dspark_diag_context_cached_k_probes.shape == (2, 2, 8)
-        assert (
-            proposer.model.model._dspark_diag_context_cached_k_probes
-            is proposer._dspark_diag_context_cached_k_probes
-        )
-        # One first-layer pre-hook, three forward hooks per layer, one norm hook.
-        assert len(proposer._dspark_diag_hook_handles) == 2 + 3 * 2
 
 
 # fmt: off

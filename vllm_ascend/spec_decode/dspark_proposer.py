@@ -6,7 +6,6 @@ from typing import Any
 import torch
 from vllm.config import CUDAGraphMode, VllmConfig, get_layers_from_vllm_config
 from vllm.forward_context import BatchDescriptor, get_forward_context
-from vllm.logger import logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.kv_cache_interface import UniformTypeKVCacheSpecs
@@ -17,10 +16,6 @@ from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.ops.triton.spec_decode.utils import copy_and_expand_dflash_and_dspark_inputs_kernel_single_grid
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
-
-_DSPARK_DIAG_MAX_RUNTIME_STEPS = 6
-_DSPARK_DIAG_PROBE_WIDTH = 8
-_DSPARK_DIAG_CONTEXT_ROWS = 2
 
 
 class AscendDSparkProposer(AscendDflashProposer):
@@ -53,30 +48,6 @@ class AscendDSparkProposer(AscendDflashProposer):
         blk = 1 + self.num_speculative_tokens
         self._dspark_draft_buffer = torch.zeros((self.max_batch_size, blk), dtype=torch.int64, device=device)
         self._dspark_seed_buffer = torch.zeros(self.max_batch_size, dtype=torch.int64, device=device)
-        # Temporary accuracy probes for eager/ACLGraph comparison. The model
-        # forward copies a tiny device-side slice into these persistent
-        # buffers; logging happens only after graph replay returns, never from
-        # inside the captured graph.
-        self._dspark_diag_hidden_probe = torch.zeros(
-            (1, _DSPARK_DIAG_PROBE_WIDTH),
-            dtype=self.dtype,
-            device=device,
-        )
-        self._dspark_diag_raw_logits_probe = torch.zeros(
-            (1, _DSPARK_DIAG_PROBE_WIDTH),
-            dtype=self.dtype,
-            device=device,
-        )
-        self._dspark_diag_markov_bias_probe = torch.zeros(
-            (self.num_speculative_tokens, 1, _DSPARK_DIAG_PROBE_WIDTH),
-            dtype=self.dtype,
-            device=device,
-        )
-        self._dspark_diag_runtime_step = 0
-        self._dspark_diag_capture_layouts: dict[int, dict[str, Any]] = {}
-        self._dspark_diag_hook_handles: list[Any] = []
-        self._dspark_diag_layer_names: list[str] = []
-        self._dspark_diag_primary_rank = not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
         # DSpark is not supported in vllm v1, so related property needs to be reset here.
         del self.hidden_size, self.hidden_states, self._dflash_hidden_states  # type: ignore[has-type]
         self.hidden_size = vllm_config.speculative_config.draft_model_config.get_hidden_size()
@@ -140,210 +111,6 @@ class AscendDSparkProposer(AscendDflashProposer):
         # per-layer context slot mappings as a flat list
         self._context_slot_mapping_buffers: list[torch.Tensor | None] | None = None
 
-        if self._dspark_diag_primary_rank:
-            logger.info(
-                "[dspark_diag][init] use_aclgraph=%s sample_from_anchor=%s "
-                "num_speculative_tokens=%d num_query_per_req=%d "
-                "max_query_tokens=%d",
-                getattr(self, "use_cuda_graph", False),
-                self.sample_from_anchor,
-                self.num_speculative_tokens,
-                self.num_query_per_req,
-                self.max_query_tokens,
-            )
-
-    def _dspark_diag_should_log(self) -> bool:
-        return (
-            self._dspark_diag_primary_rank
-            and getattr(self, "runner", None) is not None
-            and self._dspark_diag_runtime_step < _DSPARK_DIAG_MAX_RUNTIME_STEPS
-        )
-
-    @staticmethod
-    def _dspark_diag_copy_probe(dst: torch.Tensor, src: torch.Tensor) -> None:
-        """Copy a small 2-D prefix without introducing a host sync.
-
-        This helper is called by forward hooks while the draft graph is being
-        captured. Consequently, its ``copy_`` operation is replayed by
-        ACLGraph even though the Python hook itself is not called on replay.
-        """
-        src_2d = src.reshape(src.shape[0], -1)
-        rows = min(dst.shape[0], src_2d.shape[0])
-        width = min(dst.shape[1], src_2d.shape[1])
-        dst[:rows, :width].copy_(src_2d[:rows, :width])
-
-    def _install_dspark_graph_probes(self) -> None:
-        """Install graph-capturable probes on the Qwen3 DSpark backbone."""
-        if self._dspark_diag_hook_handles:
-            return
-        draft_model = self.get_model()
-        backbone = getattr(draft_model, "model", None)
-        layers = list(getattr(backbone, "layers", []))
-        if backbone is None or not layers:
-            if self._dspark_diag_primary_rank:
-                logger.warning(
-                    "[dspark_diag][probes] unable to install layer probes: "
-                    "draft backbone or decoder layers are unavailable"
-                )
-            return
-
-        probe_rows = min(self.num_query_per_req, _DSPARK_DIAG_PROBE_WIDTH)
-        num_layers = len(layers)
-        probe_shape = (num_layers, probe_rows, _DSPARK_DIAG_PROBE_WIDTH)
-        context_probe_shape = (
-            num_layers,
-            _DSPARK_DIAG_CONTEXT_ROWS,
-            _DSPARK_DIAG_PROBE_WIDTH,
-        )
-        self._dspark_diag_query_embedding_probe = torch.zeros(
-            (probe_rows, _DSPARK_DIAG_PROBE_WIDTH),
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_fia_output_probes = torch.zeros(
-            probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_self_attn_output_probes = torch.zeros(
-            probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_layer_hidden_probes = torch.zeros(
-            probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_layer_residual_probes = torch.zeros(
-            probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_final_norm_probe = torch.zeros(
-            (probe_rows, _DSPARK_DIAG_PROBE_WIDTH),
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_context_projected_k_probes = torch.zeros(
-            context_probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_context_projected_v_probes = torch.zeros(
-            context_probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_context_cached_k_probes = torch.zeros(
-            context_probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-        self._dspark_diag_context_cached_v_probes = torch.zeros(
-            context_probe_shape,
-            dtype=self.dtype,
-            device=self.device,
-        )
-
-        # The Qwen3 DFlash patch populates these buffers inside
-        # precompute_and_store_context_kv, immediately before and after each
-        # layer's cache insertion.
-        backbone._dspark_diag_context_projected_k_probes = (  # type: ignore[attr-defined]
-            self._dspark_diag_context_projected_k_probes
-        )
-        backbone._dspark_diag_context_projected_v_probes = (  # type: ignore[attr-defined]
-            self._dspark_diag_context_projected_v_probes
-        )
-        backbone._dspark_diag_context_cached_k_probes = (  # type: ignore[attr-defined]
-            self._dspark_diag_context_cached_k_probes
-        )
-        backbone._dspark_diag_context_cached_v_probes = (  # type: ignore[attr-defined]
-            self._dspark_diag_context_cached_v_probes
-        )
-
-        def capture_query_embedding(_module, args, kwargs) -> None:
-            hidden_states = kwargs.get("hidden_states")
-            if hidden_states is None and len(args) > 1:
-                hidden_states = args[1]
-            if isinstance(hidden_states, torch.Tensor):
-                self._dspark_diag_copy_probe(
-                    self._dspark_diag_query_embedding_probe,
-                    hidden_states,
-                )
-
-        def capture_tensor_output(dst: torch.Tensor, output_index: int | None = None):
-            def hook(_module, _args, output) -> None:
-                value = output
-                if output_index is not None and isinstance(output, (tuple, list)):
-                    value = output[output_index]
-                if isinstance(value, torch.Tensor):
-                    self._dspark_diag_copy_probe(dst, value)
-
-            return hook
-
-        # Do not hook embed_tokens directly: DSpark may share that module with
-        # the target model. The first draft decoder-layer input is the final
-        # query embedding after any mask-token substitution and is draft-only.
-        self._dspark_diag_hook_handles.append(
-            layers[0].register_forward_pre_hook(
-                capture_query_embedding,
-                with_kwargs=True,
-            )
-        )
-        self._dspark_diag_layer_names = []
-        for layer_idx, layer in enumerate(layers):
-            self_attn = layer.self_attn
-            fia = self_attn.attn
-            self._dspark_diag_layer_names.append(
-                getattr(fia, "layer_name", f"draft.layers.{layer_idx}")
-            )
-            self._dspark_diag_hook_handles.append(
-                fia.register_forward_hook(
-                    capture_tensor_output(self._dspark_diag_fia_output_probes[layer_idx])
-                )
-            )
-            self._dspark_diag_hook_handles.append(
-                self_attn.register_forward_hook(
-                    capture_tensor_output(self._dspark_diag_self_attn_output_probes[layer_idx])
-                )
-            )
-
-            def capture_layer_output(_module, _args, output, layer_idx=layer_idx) -> None:
-                if not isinstance(output, (tuple, list)) or len(output) < 2:
-                    return
-                hidden_states, residual = output[:2]
-                if isinstance(hidden_states, torch.Tensor):
-                    self._dspark_diag_copy_probe(
-                        self._dspark_diag_layer_hidden_probes[layer_idx],
-                        hidden_states,
-                    )
-                if isinstance(residual, torch.Tensor):
-                    self._dspark_diag_copy_probe(
-                        self._dspark_diag_layer_residual_probes[layer_idx],
-                        residual,
-                    )
-
-            self._dspark_diag_hook_handles.append(layer.register_forward_hook(capture_layer_output))
-
-        self._dspark_diag_hook_handles.append(
-            backbone.norm.register_forward_hook(
-                capture_tensor_output(self._dspark_diag_final_norm_probe, output_index=0)
-            )
-        )
-        if self._dspark_diag_primary_rank:
-            logger.info(
-                "[dspark_diag][probes] installed graph-safe stage probes "
-                "rows=%d width=%d layers=%s",
-                probe_rows,
-                _DSPARK_DIAG_PROBE_WIDTH,
-                self._dspark_diag_layer_names,
-            )
-
-    def load_model(self, model: torch.nn.Module) -> None:
-        super().load_model(model)
-        self._install_dspark_graph_probes()
-
     def get_graph_num_input_tokens(self, batch_descriptor: BatchDescriptor) -> int:
         """Use DSpark's native query width for uniform decode graphs.
 
@@ -355,76 +122,6 @@ class AscendDSparkProposer(AscendDflashProposer):
         if batch_descriptor.uniform and batch_descriptor.num_reqs is not None:
             return batch_descriptor.num_reqs * self.num_query_per_req
         return batch_descriptor.num_tokens
-
-    @staticmethod
-    def _dspark_diag_tensor_values(tensor: torch.Tensor | None, max_items: int = 24) -> list[Any] | None:
-        if tensor is None:
-            return None
-        return tensor.detach().reshape(-1)[:max_items].cpu().tolist()
-
-    def _propose(self, *args, **kwargs) -> torch.Tensor:
-        """Log DSpark results outside the captured graph.
-
-        ``AscendSpecDecodeBaseProposer._propose`` owns graph dispatch and
-        replay. Returning here therefore guarantees that the device probes
-        written by the graph contain replay results rather than capture-only
-        Python values.
-        """
-        draft_token_ids = super()._propose(*args, **kwargs)
-        if self._dspark_diag_should_log():
-            step = self._dspark_diag_runtime_step
-            logger.info(
-                "[dspark_diag][step=%d][output] use_aclgraph=%s "
-                "seed=%s draft_token_ids=%s hidden_probe=%s "
-                "raw_logits_probe=%s markov_bias_probe=%s",
-                step,
-                self.use_cuda_graph,
-                self._dspark_diag_tensor_values(self._dspark_seed_buffer[:1]),
-                self._dspark_diag_tensor_values(draft_token_ids),
-                self._dspark_diag_tensor_values(self._dspark_diag_hidden_probe),
-                self._dspark_diag_tensor_values(self._dspark_diag_raw_logits_probe),
-                self._dspark_diag_tensor_values(
-                    self._dspark_diag_markov_bias_probe,
-                    _DSPARK_DIAG_PROBE_WIDTH * self.num_speculative_tokens,
-                ),
-            )
-            query_embedding_probe = getattr(self, "_dspark_diag_query_embedding_probe", None)
-            if query_embedding_probe is not None:
-                logger.info(
-                    "[dspark_diag][step=%d][backbone] query_embedding=%s "
-                    "final_norm=%s",
-                    step,
-                    query_embedding_probe.detach().cpu().tolist(),
-                    self._dspark_diag_final_norm_probe.detach().cpu().tolist(),
-                )
-                logger.info(
-                    "[dspark_diag][step=%d][context_kv] layers=%s "
-                    "projected_k=%s projected_v=%s cached_k=%s cached_v=%s",
-                    step,
-                    self._dspark_diag_layer_names,
-                    self._dspark_diag_context_projected_k_probes.detach().cpu().tolist(),
-                    self._dspark_diag_context_projected_v_probes.detach().cpu().tolist(),
-                    self._dspark_diag_context_cached_k_probes.detach().cpu().tolist(),
-                    self._dspark_diag_context_cached_v_probes.detach().cpu().tolist(),
-                )
-                fia_probes = self._dspark_diag_fia_output_probes.detach().cpu().tolist()
-                self_attn_probes = self._dspark_diag_self_attn_output_probes.detach().cpu().tolist()
-                layer_hidden_probes = self._dspark_diag_layer_hidden_probes.detach().cpu().tolist()
-                layer_residual_probes = self._dspark_diag_layer_residual_probes.detach().cpu().tolist()
-                for layer_idx, layer_name in enumerate(self._dspark_diag_layer_names):
-                    logger.info(
-                        "[dspark_diag][step=%d][layer=%d][stages] name=%s "
-                        "fia=%s self_attn=%s hidden=%s residual=%s",
-                        step,
-                        layer_idx,
-                        layer_name,
-                        fia_probes[layer_idx],
-                        self_attn_probes[layer_idx],
-                        layer_hidden_probes[layer_idx],
-                        layer_residual_probes[layer_idx],
-                    )
-        self._dspark_diag_runtime_step += 1
-        return draft_token_ids
 
     def initialize_attn_backend(self, kv_cache_config, kernel_block_sizes=None) -> None:
         # Find draft layers (attention layers added by draft model)
@@ -499,19 +196,6 @@ class AscendDSparkProposer(AscendDflashProposer):
         }
         self._layer_group_idx = [name_to_gid[name] for name in self.attn_layer_names]
 
-        if self._dspark_diag_primary_rank:
-            logger.info(
-                "[dspark_diag][attn_groups] model_layer_order=%s groups=%s",
-                self.attn_layer_names,
-                [
-                    {
-                        "gid": group.kv_cache_group_id,
-                        "layers": group.layer_names,
-                    }
-                    for group in self.draft_attn_groups
-                ],
-            )
-
         # some buffers need information of groups
         self._per_group_query_slot_mapping_buffers = {
             attn_group.kv_cache_group_id: torch.zeros(self.max_query_tokens, dtype=torch.int32, device=self.device)
@@ -573,16 +257,6 @@ class AscendDSparkProposer(AscendDflashProposer):
         has_num_rejected = num_rejected_tokens_gpu is not None
         primary_gid = getattr(self, "kv_cache_gid", 0)
         num_context = int(cad.query_start_loc_cpu[batch_size])
-        diag_enabled = self._dspark_diag_should_log()
-        if diag_enabled:
-            diag_query_start_loc_before = cad.query_start_loc_cpu[: batch_size + 1].tolist()
-            diag_seq_lens_before = self._dspark_diag_tensor_values(cad.seq_lens[:batch_size])
-            diag_next_token_ids = self._dspark_diag_tensor_values(next_token_ids[:batch_size])
-            diag_target_positions = self._dspark_diag_tensor_values(target_positions)
-            diag_hidden_head = self._dspark_diag_tensor_values(target_hidden_states[:1, :_DSPARK_DIAG_PROBE_WIDTH])
-            diag_hidden_tail = self._dspark_diag_tensor_values(
-                target_hidden_states[max(num_context - 1, 0) : num_context, :_DSPARK_DIAG_PROBE_WIDTH]
-            )
         self._per_group_block_table_buffers = {
             attn_group.kv_cache_group_id: self._per_group_block_tables[attn_group.kv_cache_group_id]
             for attn_group in self.draft_attn_groups
@@ -672,86 +346,7 @@ class AscendDSparkProposer(AscendDflashProposer):
         cad.attn_mask = None
         cad.attn_state = AscendAttentionState.ChunkedPrefill
 
-        if diag_enabled:
-            primary_slot_mapping = self._per_group_query_slot_mapping_buffers[primary_gid][:num_query_total]
-            context_layouts = []
-            for attn_group in self.draft_attn_groups:
-                gid = attn_group.kv_cache_group_id
-                block_table = self._per_group_block_table_buffers[gid]
-                context_layouts.append(
-                    {
-                        "gid": gid,
-                        "layers": attn_group.layer_names,
-                        "context_slots": self._dspark_diag_tensor_values(
-                            self._per_group_context_slot_mapping_buffers[gid][: self._dflash_num_context]
-                        ),
-                        "block_table_head": self._dspark_diag_tensor_values(block_table[:2, :8]),
-                    }
-                )
-            logger.info(
-                "[dspark_diag][step=%d][inputs] batch=%d context_tokens=%d "
-                "num_query_total=%d num_sample_total=%d rejected=%s "
-                "qsl_before=%s seq_lens_before=%s next_token_ids=%s "
-                "target_positions=%s hidden_head=%s hidden_tail=%s "
-                "input_ids=%s query_positions=%s sample_indices=%s "
-                "query_slots=%s context_positions=%s context_layouts=%s "
-                "qsl_after=%s seq_lens_after=%s",
-                self._dspark_diag_runtime_step,
-                batch_size,
-                self._dflash_num_context,
-                num_query_total,
-                num_sample_total,
-                self._dspark_diag_tensor_values(num_rejected_tokens_gpu[:batch_size]) if has_num_rejected else None,
-                diag_query_start_loc_before,
-                diag_seq_lens_before,
-                diag_next_token_ids,
-                diag_target_positions,
-                diag_hidden_head,
-                diag_hidden_tail,
-                self._dspark_diag_tensor_values(self.input_ids[:num_query_total]),
-                self._dspark_diag_tensor_values(self.positions[:num_query_total]),
-                self._dspark_diag_tensor_values(token_indices_to_sample),
-                self._dspark_diag_tensor_values(primary_slot_mapping),
-                self._dspark_diag_tensor_values(self._context_positions_buffer[: self._dflash_num_context]),
-                context_layouts,
-                cad.query_start_loc_cpu[: batch_size + 1].tolist(),
-                self._dspark_diag_tensor_values(cad.seq_lens[:batch_size]),
-            )
-
         return num_query_total, token_indices_to_sample, cad, None
-
-    def build_draft_attn_metadata(
-        self,
-        common_attn_metadata,
-        num_input_tokens,
-        num_actual_tokens,
-    ):
-        multi_steps_attn_metadata, attn_metadata = super().build_draft_attn_metadata(
-            common_attn_metadata,
-            num_input_tokens,
-            num_actual_tokens,
-        )
-        if self._dspark_diag_should_log():
-            first_layer = self.draft_attn_groups[0].layer_names[0]
-            runtime_metadata = multi_steps_attn_metadata[0][first_layer]
-            logger.info(
-                "[dspark_diag][step=%d][metadata] actual_tokens=%d "
-                "graph_tokens=%d padded_reqs=%d actual_seq_q=%s "
-                "actual_seq_kv=%s block_table_shape=%s slot_mapping_len=%d "
-                "causal=%s attn_state=%s capture_layout=%s",
-                self._dspark_diag_runtime_step,
-                num_actual_tokens,
-                num_input_tokens,
-                common_attn_metadata.num_reqs,
-                getattr(runtime_metadata, "actual_seq_lengths_q", None),
-                getattr(runtime_metadata, "seq_lens_list", None),
-                tuple(runtime_metadata.block_tables.shape),
-                runtime_metadata.slot_mapping.shape[0],
-                getattr(runtime_metadata, "causal", None),
-                getattr(runtime_metadata, "attn_state", None),
-                self._dspark_diag_capture_layouts.get(num_input_tokens),
-            )
-        return multi_steps_attn_metadata, attn_metadata
 
     @torch.inference_mode()
     def dummy_run(
@@ -800,33 +395,6 @@ class AscendDSparkProposer(AscendDflashProposer):
 
         context_positions = self._context_positions_buffer[:num_context_tokens]
         context_states = self.hidden_states[:num_context_tokens]
-
-        if self._dspark_diag_primary_rank and aclgraph_runtime_mode == CUDAGraphMode.FULL:
-            context_slot_layers = None
-            context_slot_edges = None
-            if self._context_slot_mapping_buffers is not None:
-                context_slot_layers = len(self._context_slot_mapping_buffers)
-                context_slot_edges = []
-                for slots in self._context_slot_mapping_buffers:
-                    if slots is None:
-                        context_slot_edges.append(None)
-                        continue
-                    edge_slots = torch.cat(
-                        (
-                            slots[:1],
-                            slots[num_context_tokens - 1 : num_context_tokens],
-                        )
-                    )
-                    context_slot_edges.append(self._dspark_diag_tensor_values(edge_slots))
-            logger.info(
-                "[dspark_diag][capture_context] query_tokens=%d context_tokens=%d "
-                "slot_mapping_is_none=%s slot_mapping_layers=%s slot_edges=%s",
-                num_input_tokens,
-                num_context_tokens,
-                self._context_slot_mapping_buffers is None,
-                context_slot_layers,
-                context_slot_edges,
-            )
 
         # Build capture metadata for ACLGraph FULL mode, mirroring dFlash but
         # with DSpark-specific query geometry and per-group block table / slot
@@ -894,15 +462,6 @@ class AscendDSparkProposer(AscendDflashProposer):
                     is_prefilling=torch.zeros(num_reqs_padded, dtype=torch.bool),
                     block_table_tensor=block_table,
                 )
-
-                self._dspark_diag_capture_layouts[num_input_tokens] = {
-                    "capture_reqs": num_reqs,
-                    "capture_padded_reqs": num_reqs_padded,
-                    "capture_actual_tokens": num_input_tokens,
-                    "capture_qsl": self.query_start_loc.cpu[: num_reqs_padded + 1].tolist(),
-                    "capture_seq_lens": seq_lens.tolist(),
-                    "capture_slot_mapping_len": num_input_tokens,
-                }
 
                 attn_metadata = builder.build_for_graph_capture(
                     common_attn_metadata,
