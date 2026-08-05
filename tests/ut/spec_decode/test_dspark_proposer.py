@@ -365,6 +365,25 @@ class TestDSparkInitialization(_DSparkProposerTestBase):
         assert proposer.num_query_per_req == expected_num_query_per_req
         assert proposer.max_query_tokens == expected_max_query_tokens
 
+    def test_context_slot_mapping_binding_preserves_layer_group_order(self) -> None:
+        """Each layer must reference its group's persistent capture buffer."""
+        proposer = self._make_proposer(
+            max_num_tokens=_MAX_NUM_TOKENS,
+            num_reqs=_MAX_BATCH_SIZE,
+            block_size=_NUM_SPECULATIVE_TOKENS,
+        )
+        group_0 = torch.zeros(_MAX_NUM_TOKENS, dtype=torch.int32)
+        group_1 = torch.ones(_MAX_NUM_TOKENS, dtype=torch.int32)
+        proposer._per_group_context_slot_mapping_buffers = {0: group_0, 1: group_1}
+        proposer._layer_group_idx = [1, 0, 1]
+
+        proposer._bind_context_slot_mapping_buffers()
+
+        assert proposer._context_slot_mapping_buffers is not None
+        assert proposer._context_slot_mapping_buffers[0] is group_1
+        assert proposer._context_slot_mapping_buffers[1] is group_0
+        assert proposer._context_slot_mapping_buffers[2] is group_1
+
 
 class TestDSparkGraphProbes(_DSparkProposerTestBase):
     """Regression coverage for graph-safe DSpark accuracy probes."""
@@ -1276,6 +1295,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
 
         proposer._runnable = capture_runnable
         proposer._dflash_num_context = 0
+        # Reproduce the pre-fix capture lifecycle: no real request has called
+        # set_inputs_first_pass yet, so the model-facing list is absent even
+        # though persistent per-group buffers already exist.
+        proposer._context_slot_mapping_buffers = None
 
         # The target descriptor contains 16 verification/context tokens, but
         # the native anchor-first DSpark graph contains 14 query tokens.
@@ -1304,6 +1327,12 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         assert captured_kwargs["num_input_tokens"] == num_reqs * num_spec
         assert captured_kwargs["num_tokens"] == num_reqs * num_spec
         assert proposer._dflash_num_context == target_num_tokens
+        assert proposer._context_slot_mapping_buffers is not None
+        assert len(proposer._context_slot_mapping_buffers) == len(proposer._layer_group_idx)
+        assert (
+            proposer._context_slot_mapping_buffers[0]
+            is proposer._per_group_context_slot_mapping_buffers[0]
+        )
 
 
 class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):

@@ -517,6 +517,24 @@ class AscendDSparkProposer(AscendDflashProposer):
             attn_group.kv_cache_group_id: torch.zeros(self.max_num_tokens, dtype=torch.int32, device=self.device)
             for attn_group in self.draft_attn_groups
         }
+        # Bind the per-layer view as soon as the persistent per-group buffers
+        # exist. ACLGraph capture runs before the first real request; delaying
+        # this binding until set_inputs_first_pass makes the Qwen context-KV
+        # precompute return early and permanently omits all cache-update ops
+        # from the captured graph.
+        self._bind_context_slot_mapping_buffers()
+
+    def _bind_context_slot_mapping_buffers(self) -> None:
+        """Bind each draft layer to its persistent context slot buffer.
+
+        The list itself is only model-facing bookkeeping. Its tensors are the
+        persistent per-group buffers populated in-place for every request, so
+        their addresses stay stable across ACLGraph capture and replay.
+        """
+        self._context_slot_mapping_buffers = [
+            self._per_group_context_slot_mapping_buffers[group_idx]
+            for group_idx in self._layer_group_idx
+        ]
 
     def set_per_group_attn_metadata(
         self,
@@ -565,7 +583,6 @@ class AscendDSparkProposer(AscendDflashProposer):
             attn_group.kv_cache_group_id: self._per_group_block_tables[attn_group.kv_cache_group_id]
             for attn_group in self.draft_attn_groups
         }
-        self._context_slot_mapping_buffers = None
         self._dflash_num_context = num_context
         self._dflash_hidden_states[: self._dflash_num_context] = target_hidden_states[: self._dflash_num_context]
 
@@ -622,10 +639,9 @@ class AscendDSparkProposer(AscendDflashProposer):
                 HAS_NUM_REJECTED=has_num_rejected,
                 SAMPLE_FROM_ANCHOR=self.sample_from_anchor,
             )
-        # to compute self._context_slot_mapping_buffers from dict to list
-        self._context_slot_mapping_buffers = [
-            self._per_group_context_slot_mapping_buffers[gidx] for gidx in self._layer_group_idx
-        ]
+        # Rebind defensively in case attention groups were rebuilt. The tensor
+        # objects remain the persistent buffers filled by the kernel above.
+        self._bind_context_slot_mapping_buffers()
 
         effective_seq_lens = cad.seq_lens
         if has_num_rejected:
@@ -760,6 +776,12 @@ class AscendDSparkProposer(AscendDflashProposer):
         # hidden states and therefore retains the original 1 + N token width.
         # This is intentionally independent from num_query_tokens.
         num_context_tokens = min(num_tokens, self.max_num_tokens)
+
+        # dummy_run is the ACLGraph capture entry point and can execute before
+        # set_inputs_first_pass. Ensure context_slot_mapping is non-None here,
+        # otherwise precompute_and_store_context_kv returns without recording
+        # the context KV-cache writes in the graph.
+        self._bind_context_slot_mapping_buffers()
 
         (
             num_input_tokens,
