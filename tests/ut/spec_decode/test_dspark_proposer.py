@@ -753,6 +753,33 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
     the dummy_run constructs proper drafting metadata for graph capture.
     """
 
+    def test_runtime_virtual_request_uses_positive_kv_length(self):
+        """The N+1 graph bucket's virtual FIA request cannot use KV length 0."""
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=256,
+            num_reqs=1,
+            block_size=7,
+        )
+        seq_lens = torch.tensor([40], dtype=torch.int32)
+
+        padded = proposer._adjust_parallel_draft_seq_lens_for_graph(seq_lens, 2)
+
+        assert torch.equal(padded, torch.tensor([40, 1], dtype=torch.int32))
+
+    def test_dflash_graph_seq_lens_keeps_zero_padding(self):
+        """The DSpark-only fix must not change DFlash graph metadata."""
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=256,
+            num_reqs=1,
+            block_size=7,
+        )
+        proposer.method = "dflash"
+        seq_lens = torch.tensor([40], dtype=torch.int32)
+
+        padded = proposer._adjust_parallel_draft_seq_lens_for_graph(seq_lens, 2)
+
+        assert torch.equal(padded, torch.tensor([40, 0], dtype=torch.int32))
+
     @staticmethod
     def _make_proposer_with_graph_support(
         *,

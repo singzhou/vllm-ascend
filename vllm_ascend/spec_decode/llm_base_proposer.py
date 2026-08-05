@@ -62,6 +62,7 @@ from vllm_ascend.utils import check_gdn_layer, enable_sp, lmhead_tp_enable, shar
 
 # Currently we will fix block size to a small one since `num_reqs` can't be too large
 _PREPARE_INPUTS_BLOCK_SIZE = 4
+_GRAPH_PADDING_REQUEST_KV_LEN = 1
 
 
 # split hidden states along dimension of sequence
@@ -853,7 +854,9 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 common_attn_metadata.block_table_tensor, slicing_length
             )
             if self.method in ("dflash", "dspark"):
-                common_attn_metadata.seq_lens = self._adjust_tensor(common_attn_metadata.seq_lens, num_reqs_padded)
+                common_attn_metadata.seq_lens = self._adjust_parallel_draft_seq_lens_for_graph(
+                    common_attn_metadata.seq_lens, num_reqs_padded
+                )
             else:
                 common_attn_metadata.seq_lens = self._adjust_tensor(self.runner.seq_lens, num_reqs_padded)
                 common_attn_metadata.seq_lens_cpu = self._adjust_tensor(
@@ -2030,12 +2033,20 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             draft_attn_metadatas=draft_attn_metadatas,
         )
 
+    def _adjust_parallel_draft_seq_lens_for_graph(self, seq_lens, desired_size):
+        # Anchor-first DSpark drafts N query tokens but is captured in an N + 1
+        # token graph bucket. The extra token is represented as a virtual FIA
+        # request, whose KV length must be positive. DFlash has no such semantic
+        # gap and keeps the existing zero-padding behavior.
+        padding_value = _GRAPH_PADDING_REQUEST_KV_LEN if self.method == "dspark" else 0
+        return self._adjust_tensor(seq_lens, desired_size, padding_value=padding_value)
+
     # adjusting tensor into desired size
-    def _adjust_tensor(self, tensor, desired_size):
+    def _adjust_tensor(self, tensor, desired_size, padding_value=0):
         pad_size = desired_size - tensor.shape[0]
         if pad_size > 0:
             pad = [0] * (2 * tensor.dim() - 1) + [pad_size]
-            tensor = F.pad(tensor, pad, mode="constant", value=0)
+            tensor = F.pad(tensor, pad, mode="constant", value=padding_value)
         else:
             tensor = tensor[:desired_size]
         return tensor
