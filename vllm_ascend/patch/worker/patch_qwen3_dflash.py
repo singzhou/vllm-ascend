@@ -6,11 +6,37 @@ from vllm.model_executor.models.qwen3_dflash import (
 )
 
 
+def _copy_context_edge_rows(dst: torch.Tensor | None, layer_idx: int, src: torch.Tensor) -> None:
+    """Copy the first/last context row into a persistent DSpark probe."""
+    if dst is None:
+        return
+    src_2d = src.reshape(src.shape[0], -1)
+    width = min(dst.shape[-1], src_2d.shape[-1])
+    dst[layer_idx, 0, :width].copy_(src_2d[0, :width])
+    dst[layer_idx, 1, :width].copy_(src_2d[-1, :width])
+
+
+def _copy_cached_context_edge_rows(
+    dst: torch.Tensor | None,
+    layer_idx: int,
+    cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+) -> None:
+    """Read back first/last context slots after reshape-and-cache."""
+    if dst is None:
+        return
+    cache_2d = cache.reshape(cache.shape[0] * cache.shape[1], -1)
+    edge_slots = torch.cat((slot_mapping[:1], slot_mapping[-1:])).to(torch.long)
+    edge_rows = torch.index_select(cache_2d, 0, edge_slots)
+    width = min(dst.shape[-1], edge_rows.shape[-1])
+    dst[layer_idx, :, :width].copy_(edge_rows[:, :width])
+
+
 def precompute_and_store_context_kv(
     self,
     context_states: torch.Tensor,
     context_positions: torch.Tensor,
-    context_slot_mapping: torch.Tensor | None = None,
+    context_slot_mapping: torch.Tensor | list[torch.Tensor | None] | None = None,
 ) -> None:
     if not hasattr(self, "_num_attn_layers"):
         self._build_fused_kv_buffers()
@@ -45,12 +71,20 @@ def precompute_and_store_context_kv(
     tmpv = all_k_flat.clone()
     self.layers[0].self_attn.rotary_emb(positions_repeated, all_k_flat, tmpv)
 
+    all_k_final = all_k_flat.view(L, num_ctx, nkv, hd)
+    projected_k_probes = getattr(self, "_dspark_diag_context_projected_k_probes", None)
+    projected_v_probes = getattr(self, "_dspark_diag_context_projected_v_probes", None)
+    for i in range(L):
+        _copy_context_edge_rows(projected_k_probes, i, all_k_final[i])
+        _copy_context_edge_rows(projected_v_probes, i, all_v[i])
+
     if context_slot_mapping is None:
         return
 
     # --- Per-layer cache insert ---
-    all_k_final = all_k_flat.view(L, num_ctx, nkv, hd)
     per_layer = isinstance(context_slot_mapping, (list, tuple))
+    cached_k_probes = getattr(self, "_dspark_diag_context_cached_k_probes", None)
+    cached_v_probes = getattr(self, "_dspark_diag_context_cached_v_probes", None)
     for i in range(L):
         slot_mapping = context_slot_mapping[i] if per_layer else context_slot_mapping
         if slot_mapping is None:
@@ -64,6 +98,8 @@ def precompute_and_store_context_kv(
             kv_cache,
             slot_mapping,
         )
+        _copy_cached_context_edge_rows(cached_k_probes, i, kv_cache[0], slot_mapping)
+        _copy_cached_context_edge_rows(cached_v_probes, i, kv_cache[1], slot_mapping)
 
 
 DFlashQwen3Model.precompute_and_store_context_kv = precompute_and_store_context_kv
