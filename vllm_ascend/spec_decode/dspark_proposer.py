@@ -6,6 +6,7 @@ from typing import Any
 import torch
 from vllm.config import CUDAGraphMode, VllmConfig, get_layers_from_vllm_config
 from vllm.forward_context import get_forward_context
+from vllm.logger import logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.kv_cache_interface import UniformTypeKVCacheSpecs
@@ -16,6 +17,10 @@ from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.ops.triton.spec_decode.utils import copy_and_expand_dflash_and_dspark_inputs_kernel_single_grid
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
+
+
+_DSPARK_DIAG_MAX_RUNTIME_STEPS = 6
+_DSPARK_DIAG_PROBE_WIDTH = 8
 
 
 class AscendDSparkProposer(AscendDflashProposer):
@@ -48,6 +53,28 @@ class AscendDSparkProposer(AscendDflashProposer):
         blk = 1 + self.num_speculative_tokens
         self._dspark_draft_buffer = torch.zeros((self.max_batch_size, blk), dtype=torch.int64, device=device)
         self._dspark_seed_buffer = torch.zeros(self.max_batch_size, dtype=torch.int64, device=device)
+        # Temporary accuracy probes for eager/ACLGraph comparison. The model
+        # forward copies a tiny device-side slice into these persistent
+        # buffers; logging happens only after graph replay returns, never from
+        # inside the captured graph.
+        self._dspark_diag_hidden_probe = torch.zeros(
+            (1, _DSPARK_DIAG_PROBE_WIDTH),
+            dtype=self.dtype,
+            device=device,
+        )
+        self._dspark_diag_raw_logits_probe = torch.zeros(
+            (1, _DSPARK_DIAG_PROBE_WIDTH),
+            dtype=self.dtype,
+            device=device,
+        )
+        self._dspark_diag_markov_bias_probe = torch.zeros(
+            (self.num_speculative_tokens, 1, _DSPARK_DIAG_PROBE_WIDTH),
+            dtype=self.dtype,
+            device=device,
+        )
+        self._dspark_diag_runtime_step = 0
+        self._dspark_diag_capture_layouts: dict[int, dict[str, Any]] = {}
+        self._dspark_diag_primary_rank = not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
         # DSpark is not supported in vllm v1, so related property needs to be reset here.
         del self.hidden_size, self.hidden_states, self._dflash_hidden_states  # type: ignore[has-type]
         self.hidden_size = vllm_config.speculative_config.draft_model_config.get_hidden_size()
@@ -108,6 +135,59 @@ class AscendDSparkProposer(AscendDflashProposer):
 
         # per-layer context slot mappings as a flat list
         self._context_slot_mapping_buffers: list[torch.Tensor | None] | None = None
+
+        if self._dspark_diag_primary_rank:
+            logger.info(
+                "[dspark_diag][init] use_aclgraph=%s sample_from_anchor=%s "
+                "num_speculative_tokens=%d num_query_per_req=%d "
+                "max_query_tokens=%d",
+                getattr(self, "use_cuda_graph", False),
+                self.sample_from_anchor,
+                self.num_speculative_tokens,
+                self.num_query_per_req,
+                self.max_query_tokens,
+            )
+
+    def _dspark_diag_should_log(self) -> bool:
+        return (
+            self._dspark_diag_primary_rank
+            and getattr(self, "runner", None) is not None
+            and self._dspark_diag_runtime_step < _DSPARK_DIAG_MAX_RUNTIME_STEPS
+        )
+
+    @staticmethod
+    def _dspark_diag_tensor_values(tensor: torch.Tensor | None, max_items: int = 24) -> list[Any] | None:
+        if tensor is None:
+            return None
+        return tensor.detach().reshape(-1)[:max_items].cpu().tolist()
+
+    def _propose(self, *args, **kwargs) -> torch.Tensor:
+        """Log DSpark results outside the captured graph.
+
+        ``AscendSpecDecodeBaseProposer._propose`` owns graph dispatch and
+        replay. Returning here therefore guarantees that the device probes
+        written by the graph contain replay results rather than capture-only
+        Python values.
+        """
+        draft_token_ids = super()._propose(*args, **kwargs)
+        if self._dspark_diag_should_log():
+            logger.info(
+                "[dspark_diag][step=%d][output] use_aclgraph=%s "
+                "seed=%s draft_token_ids=%s hidden_probe=%s "
+                "raw_logits_probe=%s markov_bias_probe=%s",
+                self._dspark_diag_runtime_step,
+                self.use_cuda_graph,
+                self._dspark_diag_tensor_values(self._dspark_seed_buffer[:1]),
+                self._dspark_diag_tensor_values(draft_token_ids),
+                self._dspark_diag_tensor_values(self._dspark_diag_hidden_probe),
+                self._dspark_diag_tensor_values(self._dspark_diag_raw_logits_probe),
+                self._dspark_diag_tensor_values(
+                    self._dspark_diag_markov_bias_probe,
+                    _DSPARK_DIAG_PROBE_WIDTH * self.num_speculative_tokens,
+                ),
+            )
+        self._dspark_diag_runtime_step += 1
+        return draft_token_ids
 
     def initialize_attn_backend(self, kv_cache_config, kernel_block_sizes=None) -> None:
         # Find draft layers (attention layers added by draft model)
@@ -224,12 +304,23 @@ class AscendDSparkProposer(AscendDflashProposer):
         num_sample_total = batch_size * self.num_speculative_tokens
         has_num_rejected = num_rejected_tokens_gpu is not None
         primary_gid = getattr(self, "kv_cache_gid", 0)
+        num_context = int(cad.query_start_loc_cpu[batch_size])
+        diag_enabled = self._dspark_diag_should_log()
+        if diag_enabled:
+            diag_query_start_loc_before = cad.query_start_loc_cpu[: batch_size + 1].tolist()
+            diag_seq_lens_before = self._dspark_diag_tensor_values(cad.seq_lens[:batch_size])
+            diag_next_token_ids = self._dspark_diag_tensor_values(next_token_ids[:batch_size])
+            diag_target_positions = self._dspark_diag_tensor_values(target_positions)
+            diag_hidden_head = self._dspark_diag_tensor_values(target_hidden_states[:1, :_DSPARK_DIAG_PROBE_WIDTH])
+            diag_hidden_tail = self._dspark_diag_tensor_values(
+                target_hidden_states[max(num_context - 1, 0) : num_context, :_DSPARK_DIAG_PROBE_WIDTH]
+            )
         self._per_group_block_table_buffers = {
             attn_group.kv_cache_group_id: self._per_group_block_tables[attn_group.kv_cache_group_id]
             for attn_group in self.draft_attn_groups
         }
         self._context_slot_mapping_buffers = None
-        self._dflash_num_context = int(cad.query_start_loc_cpu[batch_size])
+        self._dflash_num_context = num_context
         self._dflash_hidden_states[: self._dflash_num_context] = target_hidden_states[: self._dflash_num_context]
 
         token_indices_to_sample = torch.empty(
@@ -315,7 +406,71 @@ class AscendDSparkProposer(AscendDflashProposer):
         cad.attn_mask = None
         cad.attn_state = AscendAttentionState.ChunkedPrefill
 
+        if diag_enabled:
+            primary_slot_mapping = self._per_group_query_slot_mapping_buffers[primary_gid][:num_query_total]
+            logger.info(
+                "[dspark_diag][step=%d][inputs] batch=%d context_tokens=%d "
+                "num_query_total=%d num_sample_total=%d rejected=%s "
+                "qsl_before=%s seq_lens_before=%s next_token_ids=%s "
+                "target_positions=%s hidden_head=%s hidden_tail=%s "
+                "input_ids=%s query_positions=%s sample_indices=%s "
+                "query_slots=%s qsl_after=%s seq_lens_after=%s",
+                self._dspark_diag_runtime_step,
+                batch_size,
+                self._dflash_num_context,
+                num_query_total,
+                num_sample_total,
+                self._dspark_diag_tensor_values(num_rejected_tokens_gpu[:batch_size])
+                if has_num_rejected
+                else None,
+                diag_query_start_loc_before,
+                diag_seq_lens_before,
+                diag_next_token_ids,
+                diag_target_positions,
+                diag_hidden_head,
+                diag_hidden_tail,
+                self._dspark_diag_tensor_values(self.input_ids[:num_query_total]),
+                self._dspark_diag_tensor_values(self.positions[:num_query_total]),
+                self._dspark_diag_tensor_values(token_indices_to_sample),
+                self._dspark_diag_tensor_values(primary_slot_mapping),
+                cad.query_start_loc_cpu[: batch_size + 1].tolist(),
+                self._dspark_diag_tensor_values(cad.seq_lens[:batch_size]),
+            )
+
         return num_query_total, token_indices_to_sample, cad, None
+
+    def build_draft_attn_metadata(
+        self,
+        common_attn_metadata,
+        num_input_tokens,
+        num_actual_tokens,
+    ):
+        multi_steps_attn_metadata, attn_metadata = super().build_draft_attn_metadata(
+            common_attn_metadata,
+            num_input_tokens,
+            num_actual_tokens,
+        )
+        if self._dspark_diag_should_log():
+            first_layer = self.draft_attn_groups[0].layer_names[0]
+            runtime_metadata = multi_steps_attn_metadata[0][first_layer]
+            logger.info(
+                "[dspark_diag][step=%d][metadata] actual_tokens=%d "
+                "graph_tokens=%d padded_reqs=%d actual_seq_q=%s "
+                "actual_seq_kv=%s block_table_shape=%s slot_mapping_len=%d "
+                "causal=%s attn_state=%s capture_layout=%s",
+                self._dspark_diag_runtime_step,
+                num_actual_tokens,
+                num_input_tokens,
+                common_attn_metadata.num_reqs,
+                getattr(runtime_metadata, "actual_seq_lengths_q", None),
+                getattr(runtime_metadata, "seq_lens_list", None),
+                tuple(runtime_metadata.block_tables.shape),
+                runtime_metadata.slot_mapping.shape[0],
+                getattr(runtime_metadata, "causal", None),
+                getattr(runtime_metadata, "attn_state", None),
+                self._dspark_diag_capture_layouts.get(num_input_tokens),
+            )
+        return multi_steps_attn_metadata, attn_metadata
 
     @torch.inference_mode()
     def dummy_run(
@@ -436,6 +591,15 @@ class AscendDSparkProposer(AscendDflashProposer):
                     is_prefilling=torch.zeros(num_reqs_padded, dtype=torch.bool),
                     block_table_tensor=block_table,
                 )
+
+                self._dspark_diag_capture_layouts[num_input_tokens] = {
+                    "capture_reqs": num_reqs,
+                    "capture_padded_reqs": num_reqs_padded,
+                    "capture_actual_tokens": num_input_tokens,
+                    "capture_qsl": self.query_start_loc.cpu[: num_reqs_padded + 1].tolist(),
+                    "capture_seq_lens": seq_lens.tolist(),
+                    "capture_slot_mapping_len": num_input_tokens,
+                }
 
                 attn_metadata = builder.build_for_graph_capture(
                     common_attn_metadata,

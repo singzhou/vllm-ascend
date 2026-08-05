@@ -1113,6 +1113,16 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
 
         sample_hidden_states = last_hidden_states[token_indices_to_sample]
 
+        if self.method == "dspark":
+            # Device-only accuracy probes. These copies are intentionally kept
+            # inside the model runnable so ACLGraph replay refreshes them. The
+            # DSpark proposer prints the persistent buffers only after replay.
+            diag_hidden_probe = getattr(self, "_dspark_diag_hidden_probe", None)
+            if diag_hidden_probe is not None:
+                diag_hidden_probe.copy_(
+                    sample_hidden_states[: diag_hidden_probe.shape[0], : diag_hidden_probe.shape[1]]
+                )
+
         if get_ascend_config().enable_reduce_sample:
             if self.method in ("eagle3", "dflash", "mtp"):
                 draft_token_ids = self.compute_draft_token_ids(sample_hidden_states)
@@ -1150,6 +1160,11 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 # We changed `flash_comm_v1_enabled` to avoid `markov_emb` from being split.
                 with _disable_flash_comm_v1_context():
                     raw_logits = self.model.compute_logits(sample_hidden_states)
+                    diag_raw_logits_probe = getattr(self, "_dspark_diag_raw_logits_probe", None)
+                    if diag_raw_logits_probe is not None:
+                        diag_raw_logits_probe.copy_(
+                            raw_logits[: diag_raw_logits_probe.shape[0], : diag_raw_logits_probe.shape[1]]
+                        )
                     logits = raw_logits.view(-1, self.num_speculative_tokens, raw_logits.shape[-1])
                     num_blk = logits.shape[0]
                     draft_token_ids = self._dspark_draft_buffer[:num_blk]
@@ -1157,6 +1172,14 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                     for idx in range(self.num_speculative_tokens):
                         markov_emb = self.model.markov_embed(draft_token_ids[:, idx])
                         logits_bias = self.model.markov_bias(markov_emb)
+                        diag_markov_bias_probe = getattr(self, "_dspark_diag_markov_bias_probe", None)
+                        if diag_markov_bias_probe is not None:
+                            diag_markov_bias_probe[idx].copy_(
+                                logits_bias[
+                                    : diag_markov_bias_probe.shape[1],
+                                    : diag_markov_bias_probe.shape[2],
+                                ]
+                            )
                         logits[:, idx].add_(logits_bias)
                         draft_token_ids[:, idx + 1].copy_(logits[:, idx].argmax(dim=-1))
             else:
