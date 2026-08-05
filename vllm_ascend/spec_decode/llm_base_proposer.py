@@ -726,6 +726,16 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         if forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL:
             self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
 
+    def get_graph_num_input_tokens(self, batch_descriptor: BatchDescriptor) -> int:
+        """Return the token count used by the draft model graph.
+
+        Most speculative methods use the same padded token count as the
+        target model. Methods whose draft and verification geometries differ
+        can override this while retaining the target descriptor as the graph
+        dispatch key.
+        """
+        return batch_descriptor.num_tokens
+
     def _propose(
         self,
         # [num_tokens]
@@ -795,7 +805,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             _, batch_descriptor = self.runner.cudagraph_dispatcher.dispatch(
                 num_tokens=num_tokens, uniform_decode=uniform_decode, has_lora=has_lora
             )
-            num_input_tokens = batch_descriptor.num_tokens
+            num_input_tokens = self.get_graph_num_input_tokens(batch_descriptor)
         else:
             num_input_tokens = num_tokens
 
@@ -809,7 +819,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             aclgraph_runtime_mode, batch_descriptor = self.runner.cudagraph_dispatcher.dispatch(
                 num_tokens=num_input_tokens, uniform_decode=uniform_decode, has_lora=has_lora
             )
-            num_input_tokens = batch_descriptor.num_tokens
+            num_input_tokens = self.get_graph_num_input_tokens(batch_descriptor)
         else:
             aclgraph_runtime_mode = CUDAGraphMode.NONE
             batch_descriptor = None
@@ -824,14 +834,11 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             self.query_start_loc.gpu[:num_reqs].copy_(common_attn_metadata.query_start_loc)
             self.query_start_loc.cpu[:num_reqs].copy_(common_attn_metadata.query_start_loc_cpu)
             if self.method == "dspark":
-                # DSpark cannot use _pad_query_start_loc_for_fia because that
-                # function assumes uniform_decode_query_len (1 + N) as the
-                # per-request step size, but DSpark's num_query_per_req is N
-                # (sample_from_anchor).  When cudagraph_mode is
-                # FULL_DECODE_ONLY, _pad enters the uniform-batch branch
-                # (num_tokens == num_reqs * uniform_decode_query_len) and
-                # skips padding, leaving actual_seq_lengths_q[-1] short of
-                # the bucket size.  Apply virtual-request padding manually.
+                # The native DSpark graph uses N tokens per request. It cannot
+                # use _pad_query_start_loc_for_fia because that helper assumes
+                # the target model's 1+N uniform-decode width. Usually no tail
+                # remains; preserve a fallback virtual request for a larger
+                # non-uniform or DP-padded draft bucket.
                 num_reqs_padded = common_attn_metadata.num_reqs
                 if self.query_start_loc.np[num_reqs_padded] < num_input_tokens:
                     self.query_start_loc.np[num_reqs_padded + 1] = num_input_tokens
@@ -841,7 +848,9 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 num_reqs_padded = self.runner._pad_query_start_loc_for_fia(
                     self.query_start_loc,
                     num_input_tokens,
-                    batch_descriptor.num_reqs if batch_descriptor.num_reqs is not None else common_attn_metadata.num_reqs,
+                    batch_descriptor.num_reqs
+                    if batch_descriptor.num_reqs is not None
+                    else common_attn_metadata.num_reqs,
                     common_attn_metadata.num_reqs,
                     aclgraph_runtime_mode,
                     batch_descriptor.num_reqs,
@@ -2034,10 +2043,10 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         )
 
     def _adjust_parallel_draft_seq_lens_for_graph(self, seq_lens, desired_size):
-        # Anchor-first DSpark drafts N query tokens but is captured in an N + 1
-        # token graph bucket. The extra token is represented as a virtual FIA
-        # request, whose KV length must be positive. DFlash has no such semantic
-        # gap and keeps the existing zero-padding behavior.
+        # A padded DSpark request must have a positive KV length for FIA. DFlash
+        # keeps the existing zero-padding behavior. DSpark's native draft graph
+        # removes the per-request N versus N+1 token gap, but whole-request
+        # padding can still occur when dispatching to a larger batch bucket.
         padding_value = _GRAPH_PADDING_REQUEST_KV_LEN if self.method == "dspark" else 0
         return self._adjust_tensor(seq_lens, desired_size, padding_value=padding_value)
 

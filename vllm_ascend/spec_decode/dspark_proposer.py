@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 from vllm.config import CUDAGraphMode, VllmConfig, get_layers_from_vllm_config
-from vllm.forward_context import get_forward_context
+from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.logger import logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
@@ -17,7 +17,6 @@ from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.ops.triton.spec_decode.utils import copy_and_expand_dflash_and_dspark_inputs_kernel_single_grid
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
-
 
 _DSPARK_DIAG_MAX_RUNTIME_STEPS = 6
 _DSPARK_DIAG_PROBE_WIDTH = 8
@@ -91,11 +90,9 @@ class AscendDSparkProposer(AscendDflashProposer):
         # DSpark ACLGraph is now supported; use_cuda_graph is inherited from
         # AscendSpecDecodeBaseProposer (which checks runner._use_aclgraph() and
         # speculative_config.enforce_eager).  Do NOT override it here.
-        # Buffer size must accommodate the capture buckets, which are based on
-        # uniform_decode_query_len = 1 + num_speculative_tokens (the main
-        # model's step size).  Using num_query_per_req alone (N for
-        # sample_from_anchor) is insufficient because max_batch_size * N < the
-        # largest capture bucket (max_batch_size * (1+N)).
+        # Keep enough capacity for both native DSpark query graphs and the
+        # target model's larger 1+N context/capture descriptors. Bonus-anchor
+        # DSpark also uses the full 1+N query width.
         self.max_query_tokens = self.max_batch_size * (1 + self.num_speculative_tokens)
         # Position ids for the draft query block [max_query_tokens].
         # Overrides dflash:49; v2 uses input_buffers.positions.
@@ -154,6 +151,18 @@ class AscendDSparkProposer(AscendDflashProposer):
             and getattr(self, "runner", None) is not None
             and self._dspark_diag_runtime_step < _DSPARK_DIAG_MAX_RUNTIME_STEPS
         )
+
+    def get_graph_num_input_tokens(self, batch_descriptor: BatchDescriptor) -> int:
+        """Use DSpark's native query width for uniform decode graphs.
+
+        The target verifies ``1 + N`` tokens per request, while anchor-first
+        DSpark only evaluates ``N`` query tokens. The target descriptor remains
+        the ACLGraph cache key, but the draft model and FIA graph are captured
+        with their own token count.
+        """
+        if batch_descriptor.uniform and batch_descriptor.num_reqs is not None:
+            return batch_descriptor.num_reqs * self.num_query_per_req
+        return batch_descriptor.num_tokens
 
     @staticmethod
     def _dspark_diag_tensor_values(tensor: torch.Tensor | None, max_items: int = 24) -> list[Any] | None:
@@ -430,13 +439,9 @@ class AscendDSparkProposer(AscendDflashProposer):
                         "gid": gid,
                         "layers": attn_group.layer_names,
                         "context_slots": self._dspark_diag_tensor_values(
-                            self._per_group_context_slot_mapping_buffers[gid][
-                                : self._dflash_num_context
-                            ]
+                            self._per_group_context_slot_mapping_buffers[gid][: self._dflash_num_context]
                         ),
-                        "block_table_head": self._dspark_diag_tensor_values(
-                            block_table[:2, :8]
-                        ),
+                        "block_table_head": self._dspark_diag_tensor_values(block_table[:2, :8]),
                     }
                 )
             logger.info(
@@ -452,9 +457,7 @@ class AscendDSparkProposer(AscendDflashProposer):
                 self._dflash_num_context,
                 num_query_total,
                 num_sample_total,
-                self._dspark_diag_tensor_values(num_rejected_tokens_gpu[:batch_size])
-                if has_num_rejected
-                else None,
+                self._dspark_diag_tensor_values(num_rejected_tokens_gpu[:batch_size]) if has_num_rejected else None,
                 diag_query_start_loc_before,
                 diag_seq_lens_before,
                 diag_next_token_ids,
@@ -465,9 +468,7 @@ class AscendDSparkProposer(AscendDflashProposer):
                 self._dspark_diag_tensor_values(self.positions[:num_query_total]),
                 self._dspark_diag_tensor_values(token_indices_to_sample),
                 self._dspark_diag_tensor_values(primary_slot_mapping),
-                self._dspark_diag_tensor_values(
-                    self._context_positions_buffer[: self._dflash_num_context]
-                ),
+                self._dspark_diag_tensor_values(self._context_positions_buffer[: self._dflash_num_context]),
                 context_layouts,
                 cad.query_start_loc_cpu[: batch_size + 1].tolist(),
                 self._dspark_diag_tensor_values(cad.seq_lens[:batch_size]),
@@ -521,14 +522,20 @@ class AscendDSparkProposer(AscendDflashProposer):
         **kwargs,
     ) -> None:
         num_query_total = num_reqs * self.num_query_per_req
-        # For graph capture/replay, use the runner-provided num_tokens (already
-        # padded to a capture bucket) rather than recalculating from
-        # num_reqs * num_query_per_req, so that the drafter's num_input_tokens
-        # matches the target model's capture sizes.
-        if aclgraph_runtime_mode == CUDAGraphMode.FULL and num_tokens > 0:
-            num_query_tokens = min(num_tokens, self.max_query_tokens)
+        # The target descriptor is based on the verification width (1 + N),
+        # but anchor-first DSpark's query backbone only consumes N tokens per
+        # request. Keep the descriptor for ACLGraph dispatch and capture the
+        # draft computation at its native width.
+        if aclgraph_runtime_mode == CUDAGraphMode.FULL and batch_descriptor is not None:
+            graph_query_tokens = self.get_graph_num_input_tokens(batch_descriptor)
         else:
-            num_query_tokens = min(num_query_total if num_reqs > 0 else num_tokens, self.max_query_tokens)
+            graph_query_tokens = num_query_total if num_reqs > 0 else num_tokens
+        num_query_tokens = min(graph_query_tokens, self.max_query_tokens)
+
+        # Context K/V precomputation consumes the target model's verification
+        # hidden states and therefore retains the original 1 + N token width.
+        # This is intentionally independent from num_query_tokens.
+        num_context_tokens = min(num_tokens, self.max_num_tokens)
 
         (
             num_input_tokens,
@@ -539,36 +546,20 @@ class AscendDSparkProposer(AscendDflashProposer):
         if not self.use_cuda_graph:
             aclgraph_runtime_mode = CUDAGraphMode.NONE
 
-        context_positions = self._context_positions_buffer[:num_input_tokens]
-        context_states = self.hidden_states[:num_input_tokens]
+        context_positions = self._context_positions_buffer[:num_context_tokens]
+        context_states = self.hidden_states[:num_context_tokens]
 
         # Build capture metadata for ACLGraph FULL mode, mirroring dFlash but
         # with DSpark-specific query geometry and per-group block table / slot
         # mapping.
         multi_steps_attn_metadata: list[dict[str, Any]] = []
         if aclgraph_runtime_mode == CUDAGraphMode.FULL and len(self.draft_attn_groups) > 0:
-            # DSpark's num_query_per_req (= N) does not divide evenly into
-            # capture buckets (step = 1 + N = uniform_decode_query_len), so
-            # num_reqs * num_query_per_req < num_input_tokens (the padded
-            # bucket size).  We need a virtual-request padding entry in
-            # query_start_loc so that actual_seq_lengths_q[-1] equals
-            # num_input_tokens, satisfying the FIA TND-layout constraint.
-            #
-            # _pad_query_start_loc_for_fia cannot be used here because it
-            # assumes the uniform-decode step size (1 + N) for its
-            # arithmetic, which does not match DSpark's actual query geometry
-            # (N per request).  When cudagraph_mode is FULL_DECODE_ONLY,
-            # _pad_query_start_loc_for_fia enters the uniform-batch branch
-            # (num_tokens == num_reqs * uniform_decode_query_len) and does
-            # nothing, leaving actual_seq_lengths_q[-1] short.
-            #
-            # Instead, manually add a virtual request: set
-            # query_start_loc[num_reqs] = num_input_tokens so that
-            # actual_seq_lengths_q gains a trailing entry equal to the
-            # bucket size.
-            qsl_cpu = (
-                torch.from_numpy(self.token_arange_np[: num_reqs + 1]).clone() * self.num_query_per_req
-            ).to(torch.int32)
+            # The native DSpark graph normally has exactly N query tokens per
+            # captured request. Retain a fallback tail request only for
+            # non-uniform or externally padded descriptors.
+            qsl_cpu = (torch.from_numpy(self.token_arange_np[: num_reqs + 1]).clone() * self.num_query_per_req).to(
+                torch.int32
+            )
             self.query_start_loc.cpu[: num_reqs + 1].copy_(qsl_cpu)
             # Add virtual-request padding
             num_reqs_padded = num_reqs
@@ -587,16 +578,13 @@ class AscendDSparkProposer(AscendDflashProposer):
                     # _dummy_run per-kv-group loop).
                     block_table = self.runner.input_batch.block_table[gid].get_device_tensor()[:num_reqs_padded]
 
-                # Pad block_table for the virtual dummy request added by
-                # _pad_query_start_loc_for_fia (mirrors the builder's own
-                # padding in build() for the replay path).
+                # Pad block_table for the fallback virtual request above
+                # (mirrors the builder's own replay-path padding).
                 if block_table.shape[0] < num_reqs_padded:
                     block_table = torch.cat(
                         [
                             block_table,
-                            block_table.new_zeros(
-                                (num_reqs_padded - block_table.shape[0], block_table.shape[1])
-                            ),
+                            block_table.new_zeros((num_reqs_padded - block_table.shape[0], block_table.shape[1])),
                         ],
                         dim=0,
                     )
@@ -673,7 +661,7 @@ class AscendDSparkProposer(AscendDflashProposer):
                 )
 
             else:
-                self._dflash_num_context = num_input_tokens
+                self._dflash_num_context = num_context_tokens
                 self._runnable(
                     num_input_tokens=num_input_tokens,
                     batch_size=num_reqs,

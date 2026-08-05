@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 import torch
 from vllm.config import CUDAGraphMode
+from vllm.forward_context import BatchDescriptor
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.spec_decode.dflash_proposer import AscendDflashProposer
@@ -753,8 +754,47 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
     the dummy_run constructs proper drafting metadata for graph capture.
     """
 
-    def test_runtime_virtual_request_uses_positive_kv_length(self):
-        """The N+1 graph bucket's virtual FIA request cannot use KV length 0."""
+    @pytest.mark.parametrize(
+        ("uniform", "num_reqs", "expected_tokens"),
+        [
+            pytest.param(True, 2, 14, id="uniform-native-dspark-width"),
+            pytest.param(False, 2, 16, id="nonuniform-preserves-descriptor-width"),
+            pytest.param(True, None, 16, id="missing-request-count-fallback"),
+        ],
+    )
+    def test_graph_token_count_is_decoupled_from_target_descriptor(
+        self,
+        uniform: bool,
+        num_reqs: int | None,
+        expected_tokens: int,
+    ):
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=256,
+            num_reqs=2,
+            block_size=7,
+        )
+        descriptor = BatchDescriptor(
+            num_tokens=16,
+            num_reqs=num_reqs,
+            uniform=uniform,
+        )
+
+        assert proposer.get_graph_num_input_tokens(descriptor) == expected_tokens
+
+    def test_bonus_anchor_keeps_target_graph_width(self):
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=256,
+            num_reqs=1,
+            block_size=7,
+            hf_config=SimpleNamespace(dspark_bonus_anchor=True),
+        )
+        descriptor = BatchDescriptor(num_tokens=8, num_reqs=1, uniform=True)
+
+        assert proposer.num_query_per_req == 8
+        assert proposer.get_graph_num_input_tokens(descriptor) == 8
+
+    def test_runtime_padded_request_uses_positive_kv_length(self):
+        """A whole-request DSpark graph padding entry cannot use KV length 0."""
         proposer = self._make_proposer_with_graph_support(
             max_num_tokens=256,
             num_reqs=1,
@@ -832,9 +872,7 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
     def _make_runner_mock(num_reqs: int):
         """Create a minimal runner mock for dummy_run."""
         runner = MagicMock()
-        runner._sync_metadata_across_dp = MagicMock(
-            side_effect=lambda n, **kw: (n, None, None)
-        )
+        runner._sync_metadata_across_dp = MagicMock(side_effect=lambda n, **kw: (n, None, None))
         runner.optimistic_seq_lens_cpu = torch.ones(num_reqs, dtype=torch.int32)
         runner.seq_lens = torch.ones(num_reqs, dtype=torch.int32) * 128
         # input_batch.block_table[gid].get_device_tensor()[:num_reqs]
@@ -850,8 +888,12 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         runner.compilation_config = SimpleNamespace(cudagraph_mode=CUDAGraphMode.FULL)
 
         def _pad_query_start_loc_for_fia(
-            query_start_loc, num_tokens_padded, num_reqs_padded, num_reqs,
-            cudagraph_runtime_mode=None, batch_desc_num_reqs=None,
+            query_start_loc,
+            num_tokens_padded,
+            num_reqs_padded,
+            num_reqs,
+            cudagraph_runtime_mode=None,
+            batch_desc_num_reqs=None,
         ):
             if cudagraph_runtime_mode == CUDAGraphMode.FULL:
                 num_reqs_padded = num_reqs
@@ -886,8 +928,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         proposer._runnable = capture_runnable
         proposer._dflash_num_context = 0
 
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc:
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc,
+        ):
             mock_gfc.return_value = MagicMock(cudagraph_runtime_mode=CUDAGraphMode.NONE)
             proposer.dummy_run(
                 num_tokens=num_reqs * block_size,
@@ -926,9 +970,11 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         # Need _update_full_graph_params to not fail
         proposer.update_stream = MagicMock()
 
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc, \
-             patch("vllm_ascend.spec_decode.dspark_proposer._EXTRA_CTX", capturing=True):
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc,
+            patch("vllm_ascend.spec_decode.dspark_proposer._EXTRA_CTX", capturing=True),
+        ):
             mock_gfc.return_value = MagicMock(cudagraph_runtime_mode=CUDAGraphMode.FULL)
             proposer.dummy_run(
                 num_tokens=num_reqs * block_size,
@@ -970,8 +1016,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         proposer._dflash_num_context = 0
 
         num_tokens = num_reqs * block_size  # = 12, matches num_reqs * num_query_per_req
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"),
+        ):
             proposer.dummy_run(
                 num_tokens=num_tokens,
                 num_reqs=num_reqs,
@@ -1010,8 +1058,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         proposer._dflash_num_context = 0
 
         num_tokens = num_reqs * (1 + block_size)  # = 16, matches num_query_total
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"),
+        ):
             proposer.dummy_run(
                 num_tokens=num_tokens,
                 num_reqs=num_reqs,
@@ -1043,8 +1093,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         proposer._runnable = lambda **kw: None
         proposer._dflash_num_context = 0
 
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"),
+        ):
             proposer.dummy_run(
                 num_tokens=num_reqs * block_size,
                 num_reqs=num_reqs,
@@ -1081,12 +1133,8 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         second_group.get_metadata_builder = MagicMock(return_value=mock_builder2)
 
         proposer.draft_attn_groups = [proposer.draft_attn_groups[0], second_group]
-        proposer._per_group_query_slot_mapping_buffers[gid2] = torch.zeros(
-            max_num_tokens, dtype=torch.int32
-        )
-        proposer._per_group_block_table_buffers[gid2] = torch.zeros(
-            (num_reqs, 16), dtype=torch.int32
-        )
+        proposer._per_group_query_slot_mapping_buffers[gid2] = torch.zeros(max_num_tokens, dtype=torch.int32)
+        proposer._per_group_block_table_buffers[gid2] = torch.zeros((num_reqs, 16), dtype=torch.int32)
 
         # Setup first builder mock too
         mock_metadata1 = MagicMock()
@@ -1102,8 +1150,10 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         proposer._runnable = capture_runnable
         proposer._dflash_num_context = 0
 
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"),
+        ):
             proposer.dummy_run(
                 num_tokens=num_reqs * block_size,
                 num_reqs=num_reqs,
@@ -1120,11 +1170,8 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         assert "L0" in metadata
         assert "L1" in metadata
 
-    def test_full_mode_query_start_loc_padded_to_num_query_tokens(self):
-        """When capture bucket pads num_query_tokens beyond
-        num_reqs * num_query_per_req, _pad_query_start_loc_for_fia adds a
-        dummy request so that query_start_loc[-1] equals num_input_tokens and
-        actual_seq_lengths_q[-1] matches the graph-params key."""
+    def test_full_mode_separates_context_and_query_graph_widths(self):
+        """The target captures 1+N context tokens while DSpark captures N queries."""
         num_reqs, num_spec, max_num_tokens = 2, 7, 256
         # sample_from_anchor=True => num_query_per_req = N = 7
         # num_query_total = 2*7 = 14, but capture bucket = 16 (1+N=8 per req * 2)
@@ -1143,42 +1190,55 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         mock_builder.build_for_graph_capture.return_value = mock_metadata
         proposer.draft_attn_groups[0].get_metadata_builder = MagicMock(return_value=mock_builder)
 
-        proposer._runnable = lambda **kw: None
+        captured_kwargs = {}
+
+        def capture_runnable(**kwargs):
+            captured_kwargs.update(kwargs)
+
+        proposer._runnable = capture_runnable
         proposer._dflash_num_context = 0
 
-        # num_tokens = 16 (padded to capture bucket), num_reqs = 2
-        padded_num_tokens = num_reqs * (1 + num_spec)  # = 16
-        with patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"), \
-             patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"):
+        # The target descriptor contains 16 verification/context tokens, but
+        # the native anchor-first DSpark graph contains 14 query tokens.
+        target_num_tokens = num_reqs * (1 + num_spec)  # = 16
+        descriptor = BatchDescriptor(
+            num_tokens=target_num_tokens,
+            num_reqs=num_reqs,
+            uniform=True,
+        )
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context"),
+        ):
             proposer.dummy_run(
-                num_tokens=padded_num_tokens,
+                num_tokens=target_num_tokens,
                 num_reqs=num_reqs,
                 aclgraph_runtime_mode=CUDAGraphMode.FULL,
+                batch_descriptor=descriptor,
             )
 
         call_args = mock_builder.build_for_graph_capture.call_args
         common = call_args.args[0] if call_args.args else call_args.kwargs.get("common_attn_metadata")
-        # _pad_query_start_loc_for_fia adds a dummy request, so
-        # num_reqs_padded = 3 and query_start_loc has 4 entries.
-        # The last entry equals padded_num_tokens (16).
-        assert common.query_start_loc[-1].item() == padded_num_tokens
-        # The first request's boundary stays at num_query_per_req = 7.
-        assert common.query_start_loc[1].item() == num_spec
-        # num_reqs should be padded (3, including dummy request).
-        assert common.num_reqs == num_reqs + 1
+        assert common.query_start_loc.tolist() == [0, 7, 14]
+        assert common.num_reqs == num_reqs
+        assert common.num_input_tokens == num_reqs * num_spec
+        assert captured_kwargs["num_input_tokens"] == num_reqs * num_spec
+        assert captured_kwargs["num_tokens"] == num_reqs * num_spec
+        assert proposer._dflash_num_context == target_num_tokens
 
 
 class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):
-    """In FULL graph mode, ``_pad_query_start_loc_for_fia`` (called in
-    ``_propose``) pads ``query_start_loc`` before ``build_draft_attn_metadata``
-    is invoked.  The DSpark branch in ``build_draft_attn_metadata`` must pass
-    through the already-padded ``query_start_loc`` without modification."""
+    """If a larger batch/DP bucket pads ``query_start_loc`` before
+    ``build_draft_attn_metadata`` is invoked, the DSpark branch must pass the
+    resulting layout through without modification."""
 
     def test_query_start_loc_passed_through_in_graph_mode(self):
-        """query_start_loc padded by _pad_query_start_loc_for_fia is preserved."""
+        """An already padded query_start_loc is preserved."""
         num_reqs, num_spec = 2, 7
         proposer = self._make_proposer(
-            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+            max_num_tokens=256,
+            num_reqs=num_reqs,
+            block_size=num_spec,
         )
         proposer.use_cuda_graph = True
         proposer.use_compress = False
@@ -1192,8 +1252,7 @@ class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):
         num_input_tokens = 16  # padded to capture bucket
         num_actual_tokens = num_reqs * num_spec  # = 14
 
-        # Simulate the query_start_loc after _pad_query_start_loc_for_fia
-        # adds a dummy request: [0, 7, 14, 16] with num_reqs=3
+        # Simulate an externally padded fallback layout with one extra request.
         num_reqs_padded = num_reqs + 1
         qsl = torch.tensor([0, 7, 14, 16], dtype=torch.int32)
         qsl_cpu = torch.tensor([0, 7, 14, 16], dtype=torch.int32)
@@ -1216,7 +1275,9 @@ class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):
         """When query_start_loc already matches, no modification occurs."""
         num_reqs, num_spec = 2, 7
         proposer = self._make_proposer(
-            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+            max_num_tokens=256,
+            num_reqs=num_reqs,
+            block_size=num_spec,
         )
         proposer.use_cuda_graph = True
         proposer.use_compress = False
@@ -1254,7 +1315,9 @@ class TestBuildDraftAttnMetadataQueryStartLocPadding(_DSparkProposerTestBase):
         """In eager mode, query_start_loc is not padded."""
         num_reqs, num_spec = 2, 7
         proposer = self._make_proposer(
-            max_num_tokens=256, num_reqs=num_reqs, block_size=num_spec,
+            max_num_tokens=256,
+            num_reqs=num_reqs,
+            block_size=num_spec,
         )
         proposer.use_cuda_graph = False
         proposer.use_compress = False
