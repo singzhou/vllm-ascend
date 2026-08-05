@@ -1040,6 +1040,35 @@ class TestDSparkDummyRunACLGraph(_DSparkProposerTestBase):
         # In eager mode, _runnable should receive empty metadata
         assert captured_kwargs["multi_steps_attn_metadata"] == []
 
+    def test_profile_before_attn_backend_init_skips_context_binding(self):
+        """Memory profiling precedes creation of the layer-to-group mapping."""
+        num_reqs, block_size, max_num_tokens = 1, 3, 8
+        proposer = self._make_proposer_with_graph_support(
+            max_num_tokens=max_num_tokens,
+            num_reqs=num_reqs,
+            block_size=block_size,
+            use_cuda_graph=True,
+        )
+        proposer.runner = self._make_runner_mock(num_reqs)
+        proposer.model = MagicMock()
+        proposer._layer_group_idx = []
+        proposer._context_slot_mapping_buffers = None
+
+        with (
+            patch("vllm_ascend.spec_decode.dspark_proposer.set_ascend_forward_context"),
+            patch("vllm_ascend.spec_decode.dspark_proposer.get_forward_context") as mock_gfc,
+        ):
+            mock_gfc.return_value = MagicMock(cudagraph_runtime_mode=CUDAGraphMode.NONE)
+            proposer.dummy_run(
+                num_tokens=block_size,
+                num_reqs=num_reqs,
+                aclgraph_runtime_mode=CUDAGraphMode.NONE,
+                is_profile=True,
+            )
+
+        assert proposer._context_slot_mapping_buffers is None
+        proposer.model.precompute_and_store_context_kv.assert_called_once()
+
     def test_full_mode_builds_drafting_metadata(self):
         """When use_cuda_graph=True and FULL mode, drafting metadata is built."""
         num_reqs, block_size, max_num_tokens = 4, 5, 256

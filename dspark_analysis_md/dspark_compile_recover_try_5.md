@@ -213,3 +213,58 @@ projected_v == cached_v
 
 若 `slot_mapping_is_none=False` 且 projected/cached 已逐步一致，但接受率仍异常，才需
 继续比较 query backbone/FIA 输出；在 try4 证据下，不需要在本次修复前再增加探针。
+
+## try5 启动错误修正
+
+首次 try5 执行日志：
+
+```text
+dspark_analysis_log/dspark_eager_try_5_error.info
+```
+
+服务在可用显存探测阶段失败，所有 TP worker 的首个有效异常一致：
+
+```text
+model_runner_v1.py:3363 -> self.drafter.dummy_run(...)
+dspark_proposer.py:784 -> self._bind_context_slot_mapping_buffers()
+dspark_proposer.py:536 -> for group_idx in self._layer_group_idx
+AttributeError: 'AscendDSparkProposer' object has no attribute '_layer_group_idx'
+```
+
+这里的 `dummy_run` 是 `determine_available_memory -> profile_run`，发生在 KV cache
+配置和 `initialize_attn_backend` 之前。因此此阶段尚不存在 `_layer_group_idx`，也没有
+需要写入的 draft KV cache。try5 首版在所有 `dummy_run` 中无条件防御性绑定，错误地
+把正式捕图阶段的前置条件应用到了 pre-KV memory profile。
+
+修正后仅在 layer/group 映射已经建立时绑定：
+
+```python
+if getattr(self, "_layer_group_idx", None):
+    self._bind_context_slot_mapping_buffers()
+```
+
+同时在构造阶段把 `_layer_group_idx` 显式初始化为空列表，表达“KV backend 尚未完成
+初始化”的合法状态，避免生命周期状态依赖属性是否存在。
+
+该条件区分两个合法生命周期：
+
+```text
+pre-KV memory profile
+  -> 尚无 _layer_group_idx
+  -> 跳过绑定，保持原来的 no-cache profile 行为
+
+initialize_attn_backend
+  -> 创建 _layer_group_idx 和持久 per-group slot tensor
+  -> 立即完成第一次绑定
+
+ACLGraph capture
+  -> _layer_group_idx 已存在
+  -> 防御性重绑定
+  -> context KV-cache update 正常入图
+```
+
+新增回归测试
+`test_profile_before_attn_backend_init_skips_context_binding`，显式设置空的
+`_layer_group_idx` 后执行 `is_profile=True` 的 `dummy_run`，验证不会访问未初始化的
+映射、context list 保持 `None`，且 profile model 调用仍正常发生。原有 FULL graph
+测试继续覆盖正式捕图必须完成绑定，因而不会削弱 try5 的精度修复。

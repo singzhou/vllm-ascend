@@ -133,6 +133,10 @@ class AscendDSparkProposer(AscendDflashProposer):
         # per-gid context slot_mapping buffer
         self._per_group_context_slot_mapping_buffers: dict[int, torch.Tensor] = {}
 
+        # Populated by initialize_attn_backend after memory profiling and KV
+        # cache configuration have completed.
+        self._layer_group_idx: list[int] = []
+
         # per-layer context slot mappings as a flat list
         self._context_slot_mapping_buffers: list[torch.Tensor | None] | None = None
 
@@ -777,11 +781,13 @@ class AscendDSparkProposer(AscendDflashProposer):
         # This is intentionally independent from num_query_tokens.
         num_context_tokens = min(num_tokens, self.max_num_tokens)
 
-        # dummy_run is the ACLGraph capture entry point and can execute before
-        # set_inputs_first_pass. Ensure context_slot_mapping is non-None here,
-        # otherwise precompute_and_store_context_kv returns without recording
-        # the context KV-cache writes in the graph.
-        self._bind_context_slot_mapping_buffers()
+        # Memory profiling also enters dummy_run, but it runs before KV-cache
+        # initialization and therefore has no layer-to-group mapping yet. Bind
+        # only after initialize_attn_backend has created that mapping. The
+        # subsequent ACLGraph capture then records the context cache updates,
+        # while the pre-KV profile keeps the original no-cache behavior.
+        if getattr(self, "_layer_group_idx", None):
+            self._bind_context_slot_mapping_buffers()
 
         (
             num_input_tokens,
