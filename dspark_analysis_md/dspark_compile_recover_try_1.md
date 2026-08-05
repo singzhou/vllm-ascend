@@ -131,3 +131,16 @@ seq_lens       = [40, 1]
 - `git diff --check`：通过，未发现空白符错误。
 - 当前主机 Python 环境未安装 `torch`、`pytest` 和 `ruff`，因此无法在该环境执行仓库单测或 lint；新增回归测试需要在项目开发/镜像环境中运行。
 - 最终精度结论仍以 Ascend 实机的首次 replay 对齐结果和接受率为准。
+
+## 9. Try 1 实机结果
+
+新日志：`dspark_analysis_log/dspark_compile_try_1.info`。
+
+整改已在运行时生效：step 1 的 `actual_seq_kv` 从 `[40, 0]` 变为 `[40, 1]`。但是 step 1 的 hidden probe、raw logits、draft token，以及最终 `Accepted=9 / Drafted=35`、`25.7%` 接受率均与整改前一致。
+
+因此可以排除“虚拟请求 KV 长度为零是当前精度错误的直接原因”。正 KV 长度仍符合 FIA metadata 约束，可以保留，但下一轮定位转向：
+
+1. 捕图时 5 个 FIA graph task/handle 的层顺序；
+2. 运行时 per-layer metadata 的字典顺序；
+3. 多 KV group 下各层 block table 与 context slot mapping 是否绑定到对应 handle；
+4. 保持主模型图模式、仅让草稿模型 eager 的严格对照。

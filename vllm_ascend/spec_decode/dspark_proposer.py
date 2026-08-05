@@ -262,6 +262,19 @@ class AscendDSparkProposer(AscendDflashProposer):
         }
         self._layer_group_idx = [name_to_gid[name] for name in self.attn_layer_names]
 
+        if self._dspark_diag_primary_rank:
+            logger.info(
+                "[dspark_diag][attn_groups] model_layer_order=%s groups=%s",
+                self.attn_layer_names,
+                [
+                    {
+                        "gid": group.kv_cache_group_id,
+                        "layers": group.layer_names,
+                    }
+                    for group in self.draft_attn_groups
+                ],
+            )
+
         # some buffers need information of groups
         self._per_group_query_slot_mapping_buffers = {
             attn_group.kv_cache_group_id: torch.zeros(self.max_query_tokens, dtype=torch.int32, device=self.device)
@@ -408,13 +421,32 @@ class AscendDSparkProposer(AscendDflashProposer):
 
         if diag_enabled:
             primary_slot_mapping = self._per_group_query_slot_mapping_buffers[primary_gid][:num_query_total]
+            context_layouts = []
+            for attn_group in self.draft_attn_groups:
+                gid = attn_group.kv_cache_group_id
+                block_table = self._per_group_block_table_buffers[gid]
+                context_layouts.append(
+                    {
+                        "gid": gid,
+                        "layers": attn_group.layer_names,
+                        "context_slots": self._dspark_diag_tensor_values(
+                            self._per_group_context_slot_mapping_buffers[gid][
+                                : self._dflash_num_context
+                            ]
+                        ),
+                        "block_table_head": self._dspark_diag_tensor_values(
+                            block_table[:2, :8]
+                        ),
+                    }
+                )
             logger.info(
                 "[dspark_diag][step=%d][inputs] batch=%d context_tokens=%d "
                 "num_query_total=%d num_sample_total=%d rejected=%s "
                 "qsl_before=%s seq_lens_before=%s next_token_ids=%s "
                 "target_positions=%s hidden_head=%s hidden_tail=%s "
                 "input_ids=%s query_positions=%s sample_indices=%s "
-                "query_slots=%s qsl_after=%s seq_lens_after=%s",
+                "query_slots=%s context_positions=%s context_layouts=%s "
+                "qsl_after=%s seq_lens_after=%s",
                 self._dspark_diag_runtime_step,
                 batch_size,
                 self._dflash_num_context,
@@ -433,6 +465,10 @@ class AscendDSparkProposer(AscendDflashProposer):
                 self._dspark_diag_tensor_values(self.positions[:num_query_total]),
                 self._dspark_diag_tensor_values(token_indices_to_sample),
                 self._dspark_diag_tensor_values(primary_slot_mapping),
+                self._dspark_diag_tensor_values(
+                    self._context_positions_buffer[: self._dflash_num_context]
+                ),
+                context_layouts,
                 cad.query_start_loc_cpu[: batch_size + 1].tolist(),
                 self._dspark_diag_tensor_values(cad.seq_lens[:batch_size]),
             )
