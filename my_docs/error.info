@@ -1,0 +1,333 @@
+(Worker_TP2 pid=79096) [DSpark][FIA v2] updating ACLGraph with tensor seq_lens
+(Worker_TP3 pid=79097) [DSpark][FIA v2] updating ACLGraph with tensor seq_lens
+(Worker_TP1 pid=79095) [DSpark][FIA v2] updating ACLGraph with tensor seq_lens
+(Worker_TP0 pid=79094) [DSpark][FIA v2] updating ACLGraph with tensor seq_lens
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] WorkerProc hit an exception.
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP2 pid=79096) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] 
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] WorkerProc hit an exception.
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] WorkerProc hit an exception.
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] WorkerProc hit an exception.
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP3 pid=79097) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] 
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] Traceback (most recent call last):
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 999, in worker_busy_loop
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     output = func(*args, **kwargs)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/worker.py", line 689, in sample_tokens
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return self.model_runner.sample_tokens(grammar_output)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/usr/local/python3.12.13/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     return func(*args, **kwargs)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2276, in sample_tokens
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     propose_draft_token_ids(sampler_output.sampled_token_ids)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 2216, in propose_draft_token_ids
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._draft_token_ids = self.propose_draft_token_ids(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", line 1630, in propose_draft_token_ids
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     draft_token_ids = self.drafter._propose(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]                       ^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 1296, in _propose
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params_if_needed(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 944, in _update_full_graph_params_if_needed
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     self._update_full_graph_params(forward_context, num_input_tokens, multi_steps_attn_metadata)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/spec_decode/llm_base_proposer.py", line 2341, in _update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     update_full_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", line 289, in update_full_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     impl_cls.update_graph_params(
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]   File "/vllm-workspace/vllm-ascend/vllm_ascend/attention/attention_v1.py", line 602, in update_graph_params
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007]     (
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] ValueError: too many values to unpack (expected 15)
+(Worker_TP0 pid=79094) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] 
+(Worker_TP1 pid=79095) ERROR 08-10 12:54:36 [multiproc_executor.py:1007] 
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [dump_input.py:72] Dumping input data for V1 LLM engine (v0.26.0) with config: model='/sharenfs/foundation_model/Qwen3.6-27B', speculative_config=SpeculativeConfig(method='dspark', model='/sharenfs/foundation_model/Qwen3.6-27B-Dspark-0810-64000', num_spec_tokens=7), tokenizer='/sharenfs/foundation_model/Qwen3.6-27B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=True, quantization=None, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=npu, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=qwen3, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [8, 16], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 16, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, enable_bf16x3_router_gemm=False, moe_backend='auto', linear_backend='auto'), 
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [dump_input.py:79] Dumping scheduler output for model execution: SchedulerOutput(scheduled_new_reqs=[], scheduled_cached_reqs=CachedRequestData(req_ids=['chatcmpl-aba9e4428b96c36b-bf80e312'],resumed_req_ids=set(),new_token_ids_lens=[],all_token_ids_lens={},new_block_ids=[None],num_computed_tokens=[25],num_output_tokens=[1]), num_scheduled_tokens={chatcmpl-aba9e4428b96c36b-bf80e312: 8}, total_num_scheduled_tokens=8, scheduled_spec_decode_tokens={chatcmpl-aba9e4428b96c36b-bf80e312: [-1, -1, -1, -1, -1, -1, -1]}, scheduled_encoder_inputs={}, num_common_prefix_blocks=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], finished_req_ids=[], free_encoder_mm_hashes=[], scheduled_encoder_input_stats=null, preempted_req_ids=[], has_structured_output_requests=false, pending_structured_output_tokens=false, num_invalid_spec_tokens=null, kv_connector_metadata=null, ec_connector_metadata=null, new_block_ids_to_zero=null, kv_cache_block_copies=null, num_spec_tokens_to_schedule=7)
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [dump_input.py:81] Dumping scheduler stats: SchedulerStats(num_running_reqs=1, num_waiting_reqs=0, num_skipped_waiting_reqs=0, step_counter=0, current_wave=0, kv_cache_usage=0.016387121650279557, iteration_details=None, prefix_cache_stats=PrefixCacheStats(reset=False, requests=0, queries=0, hits=0, preempted_requests=0, preempted_queries=0, preempted_hits=0), connector_prefix_cache_stats=None, kv_cache_eviction_events=[], spec_decoding_stats=None, kv_connector_stats=None, waiting_lora_adapters={}, running_lora_adapters={}, cudagraph_stats=None, perf_stats=None)
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332] EngineCore encountered a fatal error.
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332] Traceback (most recent call last):
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1323, in run_engine_core
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     engine_core.run_busy_loop()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1364, in run_busy_loop
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     self._process_engine_step()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1403, in _process_engine_step
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     outputs, model_executed = self.step_fn()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]                               ^^^^^^^^^^^^^^
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 693, in step_with_batch_queue
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     model_output = future.result()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]                    ^^^^^^^^^^^^^^^
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 91, in result
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     return super().result()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]            ^^^^^^^^^^^^^^^^
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/usr/local/python3.12.13/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     return self.__get_result()
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/usr/local/python3.12.13/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     raise self._exception
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 95, in _wait_for_response
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     response = self.aggregate(self.get_response())
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]                               ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]   File "/vllm-workspace/vllm/vllm/v1/executor/multiproc_executor.py", line 394, in get_response
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332]     raise RuntimeError(
+(EngineCore pid=78818) ERROR 08-10 12:54:36 [core.py:1332] RuntimeError: Worker failed with error 'too many values to unpack (expected 15)', please check the stack trace above for the root cause
+(Worker_TP0 pid=79094) INFO 08-10 12:54:36 [multiproc_executor.py:793] Parent process exited, terminating worker queues
+(EngineCore pid=78818) INFO 08-10 12:54:36 [multiproc_executor.py:429] [shutdown] Executor: waiting for worker exit count=4
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704] AsyncLLM output_handler failed.
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704] Traceback (most recent call last):
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704]   File "/vllm-workspace/vllm/vllm/v1/engine/async_llm.py", line 660, in output_handler
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704]     outputs = await engine_core.get_output_async()
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704]               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704]   File "/vllm-workspace/vllm/vllm/v1/engine/core_client.py", line 1061, in get_output_async
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704]     raise self._format_exception(outputs) from None
+(APIServer pid=78365) ERROR 08-10 12:54:36 [async_llm.py:704] vllm.v1.engine.exceptions.EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830] Error in chat completion stream generator.
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830] Traceback (most recent call last):
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]   File "/vllm-workspace/vllm/vllm/entrypoints/openai/chat_completion/serving.py", line 477, in chat_completion_stream_generator
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]     async for res in result_generator:
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]   File "/vllm-workspace/vllm/vllm/v1/engine/async_llm.py", line 579, in generate
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]     out = q.get_nowait() or await q.get()
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]                             ^^^^^^^^^^^^^
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]   File "/vllm-workspace/vllm/vllm/v1/engine/output_processor.py", line 85, in get
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]     raise output
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]   File "/vllm-workspace/vllm/vllm/v1/engine/async_llm.py", line 660, in output_handler
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]     outputs = await engine_core.get_output_async()
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]   File "/vllm-workspace/vllm/vllm/v1/engine/core_client.py", line 1061, in get_output_async
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830]     raise self._format_exception(outputs) from None
+(APIServer pid=78365) ERROR 08-10 12:54:36 [serving.py:830] vllm.v1.engine.exceptions.EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+(APIServer pid=78365) INFO:     Shutting down
+(EngineCore pid=78818) WARNING 08-10 12:54:41 [multiproc_executor.py:441] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=4
+(APIServer pid=78365) INFO:     Waiting for application shutdown.
+(APIServer pid=78365) INFO:     Application shutdown complete.
+(APIServer pid=78365) INFO:     Finished server process [78365]
+(APIServer pid=78365) INFO 08-10 12:54:41 [core_client.py:655] [shutdown] MPClient: start timeout=0s
+(APIServer pid=78365) INFO 08-10 12:54:41 [core_client.py:657] [shutdown] MPClient: stopping engine manager
+(APIServer pid=78365) WARNING 08-10 12:54:41 [utils.py:626] [shutdown] Process manager: force killing remaining processes count=1
+(APIServer pid=78365) INFO 08-10 12:54:41 [core_client.py:659] [shutdown] MPClient: engine manager stopped
+(APIServer pid=78365) INFO 08-10 12:54:41 [core_client.py:660] [shutdown] MPClient: cleaning up background resources
+(APIServer pid=78365) INFO 08-10 12:54:41 [core_client.py:662] [shutdown] MPClient: complete
