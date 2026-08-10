@@ -482,6 +482,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         draft_attn_metadatas=None,
     ):
         use_layer_aware_replay = needs_layer_aware_fia_graph_replay()
+        use_device_seq_lens = bool(
+            _EXTRA_CTX.is_draft_model
+            and draft_attn_metadatas
+            and any(
+                getattr(metadata, "use_device_seq_lens", False)
+                for per_step_metadata in draft_attn_metadatas
+                for metadata in per_step_metadata.values()
+            )
+        )
         if using_paged_attention(num_tokens, vllm_config):
             # Paged Attention update logic
             if _EXTRA_CTX.is_draft_model:
@@ -537,8 +546,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     )
                     torch.npu.graph_task_update_end(update_stream)
                     event.record(update_stream)
-        elif _EXTRA_CTX.sinks:
+        elif _EXTRA_CTX.sinks or use_device_seq_lens:
             # FIA update logic
+            if use_device_seq_lens:
+                print("[DSpark][FIA v2] updating ACLGraph with tensor seq_lens", flush=True)
             if _EXTRA_CTX.is_draft_model:
                 graph_params = get_draft_graph_params()
                 attn_metadata = draft_attn_metadatas
@@ -608,13 +619,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
                     if _EXTRA_CTX.is_draft_model:
                         draft_step, key = draft_attn_key_steps[attn_count]
-                        seq_lens = attn_metadata[draft_step][key].seq_lens_list
-                        actual_seq_lengths_q = attn_metadata[draft_step][key].actual_seq_lengths_q
+                        metadata = attn_metadata[draft_step][key]
                         attn_count = attn_count + 1
                     else:
                         metadata_key = layer_name if layer_name is not None and layer_name in attn_metadata else key
-                        seq_lens = attn_metadata[metadata_key].seq_lens_list
-                        actual_seq_lengths_q = attn_metadata[metadata_key].actual_seq_lengths_q
+                        metadata = attn_metadata[metadata_key]
+
+                    metadata_uses_device_seq_lens = getattr(metadata, "use_device_seq_lens", False)
+                    seq_lens = metadata.seq_lens if metadata_uses_device_seq_lens else metadata.seq_lens_list
+                    actual_seq_lengths_q = metadata.actual_seq_lengths_q
+                    sparse_mode = (
+                        4
+                        if sliding_window is not None
+                        else 0
+                        if metadata_uses_device_seq_lens and not metadata.causal
+                        else 3
+                    )
+                    pre_tokens = sliding_window if sliding_window is not None else SWA_INT_MAX
+                    next_tokens = (
+                        SWA_INT_MAX
+                        if metadata_uses_device_seq_lens and sliding_window is None and not metadata.causal
+                        else 0
+                    )
 
                     torch.npu.graph_task_update_begin(update_stream, handle)
                     torch_npu.npu_fused_infer_attention_score_v2.out(
@@ -629,9 +655,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         actual_seq_kvlen=seq_lens,
                         num_key_value_heads=num_kv_heads,
                         num_query_heads=num_heads,
-                        sparse_mode=4 if sliding_window is not None else 3,
-                        pre_tokens=sliding_window if sliding_window is not None else SWA_INT_MAX,
-                        next_tokens=0,
+                        sparse_mode=sparse_mode,
+                        pre_tokens=pre_tokens,
+                        next_tokens=next_tokens,
                         softmax_scale=scale,
                         learnable_sink=sinks,
                         workspace=workspace,
@@ -1034,6 +1060,22 @@ class AscendAttentionBackendImpl(AttentionImpl):
             graph_params = get_graph_params()
 
         actual_seq_lengths_q = attn_metadata.actual_seq_lengths_q
+        use_device_seq_lens = getattr(attn_metadata, "use_device_seq_lens", False)
+        if use_device_seq_lens:
+            print("[DSpark][FIA v2] capturing ACLGraph with tensor seq_lens", flush=True)
+        sparse_mode = (
+            4
+            if self.sliding_window is not None
+            else 0
+            if use_device_seq_lens and not attn_metadata.causal
+            else 3
+        )
+        pre_tokens = self.sliding_window if self.sliding_window is not None else SWA_INT_MAX
+        next_tokens = (
+            SWA_INT_MAX
+            if use_device_seq_lens and self.sliding_window is None and not attn_metadata.causal
+            else 0
+        )
         softmax_lse = torch.empty(1, dtype=query.dtype, device=query.device)
         use_max_workspace = self._use_max_workspace_for_fia_graph
         workspace = graph_params.workspaces.get(num_tokens)
@@ -1054,9 +1096,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 num_key_value_heads=self.num_kv_heads,
                 softmax_scale=self.scale,
                 num_query_heads=self.num_heads,
-                sparse_mode=4 if self.sliding_window is not None else 3,
-                pre_tokens=self.sliding_window if self.sliding_window is not None else SWA_INT_MAX,
-                next_tokens=0,
+                sparse_mode=sparse_mode,
+                pre_tokens=pre_tokens,
+                next_tokens=next_tokens,
                 learnable_sink=self.sinks,
             )
             workspace = cache_graph_workspace(
@@ -1080,9 +1122,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 num_key_value_heads=self.num_kv_heads,
                 softmax_scale=self.scale,
                 num_query_heads=self.num_heads,
-                sparse_mode=4 if self.sliding_window is not None else 3,
-                pre_tokens=self.sliding_window if self.sliding_window is not None else SWA_INT_MAX,
-                next_tokens=0,
+                sparse_mode=sparse_mode,
+                pre_tokens=pre_tokens,
+                next_tokens=next_tokens,
                 learnable_sink=self.sinks,
             )
             should_update_workspace_cache = True
@@ -1105,7 +1147,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 weak_ref_tensors(key),
                 weak_ref_tensors(value),
                 weak_ref_tensors(block_table),
-                weak_ref_tensors(attn_metadata.attn_mask),
+                weak_ref_tensors(attn_metadata.attn_mask) if attn_metadata.attn_mask is not None else None,
                 block_size,
                 actual_seq_lengths_kv,
                 self.num_kv_heads,
@@ -1131,9 +1173,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
             actual_seq_kvlen=actual_seq_lengths_kv,
             num_key_value_heads=self.num_kv_heads,
             num_query_heads=self.num_heads,
-            sparse_mode=4 if self.sliding_window is not None else 3,
-            pre_tokens=self.sliding_window if self.sliding_window is not None else SWA_INT_MAX,
-            next_tokens=0,
+            sparse_mode=sparse_mode,
+            pre_tokens=pre_tokens,
+            next_tokens=next_tokens,
             softmax_scale=self.scale,
             learnable_sink=self.sinks,
             workspace=workspace,
@@ -1281,8 +1323,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
+        use_device_seq_lens = getattr(attn_metadata, "use_device_seq_lens", False)
         if _EXTRA_CTX.capturing:
-            if self.sinks is not None:
+            if self.sinks is not None or use_device_seq_lens:
                 attn_output, num_tokens = self.full_graph_fia_v2(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
@@ -1303,12 +1346,16 @@ class AscendAttentionBackendImpl(AttentionImpl):
             key = key[:num_tokens]
             value = value[:num_tokens]
         # Get workspace from cache or calculate it if not present.
-        if self.sinks is not None:
+        if self.sinks is not None or use_device_seq_lens:
+            if use_device_seq_lens:
+                actual_seq_lengths_kv = attn_metadata.seq_lens
             actual_seq_qlen = attn_metadata.actual_seq_lengths_q
             if attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
                 actual_seq_qlen = torch.tensor([1] * len(attn_metadata.seq_lens_list), dtype=torch.int32).cumsum(dim=0)
             if self.sliding_window is not None:
                 sparse_mode = 4
+            elif use_device_seq_lens and not attn_metadata.causal:
+                sparse_mode = 0
             else:
                 sparse_mode = 3
             attn_output, _ = torch_npu.npu_fused_infer_attention_score_v2(
@@ -1319,7 +1366,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 num_key_value_heads=self.num_kv_heads,
                 input_layout="TND",
                 pre_tokens=self.sliding_window if self.sliding_window is not None else SWA_INT_MAX,
-                next_tokens=0,
+                next_tokens=(
+                    SWA_INT_MAX
+                    if use_device_seq_lens and self.sliding_window is None and not attn_metadata.causal
+                    else 0
+                ),
                 atten_mask=attn_metadata.attn_mask,
                 sparse_mode=sparse_mode,
                 softmax_scale=self.scale,

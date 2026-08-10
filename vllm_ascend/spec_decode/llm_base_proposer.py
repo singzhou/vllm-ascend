@@ -44,7 +44,7 @@ from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX, set_ascend_forward_context
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
-from vllm_ascend.attention.attention_v1 import AscendAttentionState
+from vllm_ascend.attention.attention_v1 import AscendAttentionMetadataBuilder, AscendAttentionState
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.compilation.acl_graph import ACLGraphWrapper, update_full_graph_params
 from vllm_ascend.device.device_op import DeviceOperator
@@ -2447,12 +2447,31 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             if self.method == "dspark":
                 gid = attn_group.kv_cache_group_id
                 common_attn_metadata = copy.copy(common_attn_metadata)
+                device_seq_lens = common_attn_metadata.seq_lens
+                quant_config = self.vllm_config.quant_config
+                use_device_seq_lens = isinstance(builder, AscendAttentionMetadataBuilder) and not (
+                    quant_config is not None and getattr(quant_config, "enable_c8_quant", False)
+                )
                 block_table = getattr(self, "_per_group_block_table_buffers", {}).get(gid)
                 if block_table is not None:
                     common_attn_metadata.block_table_tensor = block_table[: common_attn_metadata.num_reqs]
                 slot_mapping = self._per_group_query_slot_mapping_buffers[gid]
                 if slot_mapping is not None:
                     common_attn_metadata.slot_mapping = slot_mapping[:num_input_tokens]
+                # Rejection correction makes the current DSpark seq_lens
+                # device-authoritative.  The CPU value below is builder-only
+                # structural metadata; FIA v2 consumes the exact device tensor.
+                if use_device_seq_lens:
+                    cpu_seq_lens = common_attn_metadata._seq_lens_cpu
+                    if cpu_seq_lens is None:
+                        cpu_seq_lens = common_attn_metadata.seq_lens_cpu
+                    if cpu_seq_lens is None:
+                        cpu_seq_lens = torch.ones(
+                            common_attn_metadata.num_reqs,
+                            dtype=device_seq_lens.dtype,
+                            device="cpu",
+                        )
+                    common_attn_metadata.seq_lens = cpu_seq_lens[: common_attn_metadata.num_reqs]
                 # query_start_loc is already padded by _pad_query_start_loc_for_fia
                 # in the FULL graph path of _propose, so qsl[num_reqs] already
                 # equals num_input_tokens.  No tail-absorb or device-scalar
@@ -2460,6 +2479,10 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 attn_metadata = builder.build_for_drafting(
                     common_attn_metadata, draft_index=1, **extra_attn_metadata_args
                 )
+                if use_device_seq_lens:
+                    common_attn_metadata.seq_lens = device_seq_lens
+                    attn_metadata.seq_lens = device_seq_lens
+                    attn_metadata.use_device_seq_lens = True
             else:
                 attn_metadata = builder.build(
                     0, common_attn_metadata, self.runner.get_model(), **extra_attn_metadata_args
