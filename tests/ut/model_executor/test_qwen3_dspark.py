@@ -33,15 +33,16 @@ class TestQwen3DSparkWeightLoading:
         """Rotate FC weights and preserve all other weights before delegation."""
         model_cls = qwen3_dspark.AscendQwen3DSparkForCausalLM
 
-        # ``load_weights`` only reads ``rotation_path`` from the model. Bypass the
-        # full model constructor and nn.Module attribute handling to keep this a
-        # focused CPU unit test.
+        # ``load_weights`` only reads ``rotation_path`` / ``enable_confidence_head``
+        # from the model. Bypass the full model constructor and nn.Module
+        # attribute handling to keep this a focused CPU unit test.
         model = model_cls.__new__(model_cls)
         rotation_path = "quarot.safetensors"
         object.__setattr__(model, "rotation_path", rotation_path)
         # Set by the real __init__, which this test bypasses; load_weights reads
         # it to decide whether the target head may be shared.
         object.__setattr__(model, "draft_id_to_target_id", None)
+        object.__setattr__(model, "enable_confidence_head", False)
 
         # Use a non-identity matrix so an unrotated FC weight fails the assertion.
         rotation_matrix = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
