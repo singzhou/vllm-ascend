@@ -635,7 +635,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             else:
                 graph_params = get_graph_params()
                 attn_metadata = forward_context.attn_metadata
-                attn_keys = list(attn_metadata.keys())
+                # Only standard FIA layers have graph parameters here. GDN and
+                # linear-attention metadata are updated by the conv1d path and
+                # do not expose seq_lens_list.
+                attn_keys = [key for key, metadata in attn_metadata.items() if hasattr(metadata, "seq_lens_list")]
                 if not use_layer_aware_replay:
                     # In some speculative methods (such as DFlash), the order of
                     # attn_keys in the Target model will be disrupted instead of

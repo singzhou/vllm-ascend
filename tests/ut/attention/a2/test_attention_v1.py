@@ -773,3 +773,51 @@ class TestAscendAttentionBackendImpl(TestBase):
         ]
         self.assertEqual(attn_module._ATTN_KEYS_BUFFER, expected)
         self.assertEqual(mock_fia.out.call_count, 3)
+
+    @patch("torch.npu.stream")
+    @patch("torch.npu.graph_task_update_begin")
+    @patch("torch.npu.graph_task_update_end")
+    @patch("torch_npu.npu_fused_infer_attention_score")
+    @patch("vllm_ascend.attention.attention_v1.get_graph_params")
+    @patch("vllm_ascend.attention.attention_v1._EXTRA_CTX")
+    @patch("vllm_ascend.attention.attention_v1.using_paged_attention", return_value=False)
+    @patch("vllm_ascend.attention.attention_v1.needs_layer_aware_fia_graph_replay", return_value=True)
+    def test_update_graph_params_filters_gdn_metadata_for_layer_aware_replay(
+        self,
+        mock_needs_layer_aware_fia_graph_replay,
+        mock_using_paged_attention,
+        mock_EXTRA_CTX,
+        mock_get_graph_params,
+        mock_fia,
+        mock_graph_task_update_end,
+        mock_graph_task_update_begin,
+        mock_stream,
+    ):
+        mock_EXTRA_CTX.sinks = False
+        mock_EXTRA_CTX.is_draft_model = False
+
+        param: list[MagicMock | None] = [MagicMock()] * 22
+        param[16] = None  # sliding_window
+        param[17] = None  # c8_k_aq_scale
+        param[21] = None  # layer_name
+
+        mock_get_graph_params.return_value.attn_params = {1: [tuple(param)]}
+        mock_get_graph_params.return_value.handles = {1: [MagicMock()]}
+        mock_get_graph_params.return_value.events = {1: [MagicMock()]}
+        mock_get_graph_params.return_value.workspaces = {1: None}
+
+        gdn_key = "model.layers.0.linear_attn.attn"
+        fia_key = "model.layers.1.self_attn.attn"
+        forward_context = MagicMock()
+        forward_context.attn_metadata = {
+            gdn_key: SimpleNamespace(),
+            fia_key: SimpleNamespace(
+                seq_lens_list=[1],
+                actual_seq_lengths_q=[1],
+                block_tables=MagicMock(),
+            ),
+        }
+
+        self.impl.update_graph_params(self.mock_stream, forward_context, 1, self.mock_vllm_config)
+
+        self.assertEqual(mock_fia.out.call_count, 1)
