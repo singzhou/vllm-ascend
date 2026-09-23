@@ -843,6 +843,19 @@ class NPUModelRunner(GPUModelRunner):
         self._track_tmp_encoder_cache_refs(scheduler_output)
         return sampling_metadata
 
+    def _dummy_pooler_run_task(self, hidden_states, task):
+        # Upstream has no custom dummy-metadata factory. Keep the hook local
+        # to NPU profiling instead of treating malformed requests as dummy data.
+        from vllm_ascend.ops.kev_pointer import KevPointerPooler
+
+        if task == "plugin" and isinstance(self.get_model().pooler, KevPointerPooler):
+            num_tokens = hidden_states.shape[0]
+            num_reqs = min(num_tokens, self.scheduler_config.max_num_seqs)
+            counts = [num_tokens // num_reqs] * num_reqs
+            counts[-1] += num_tokens % num_reqs
+            return self.get_model().pooler.profile(hidden_states, counts)
+        return super()._dummy_pooler_run_task(hidden_states, task)
+
     def _update_states_after_model_execute(
         self, output_token_ids: torch.Tensor, scheduler_output: "SchedulerOutput"
     ) -> None:

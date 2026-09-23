@@ -514,7 +514,7 @@ setup(
     install_requires=get_requirements(),
     ext_modules=ext_modules,
     cmdclass=cmdclass,
-    extras_require={},
+    extras_require={"kev-export": ["peft>=0.21", "transformers>=5.17,<6"]},
     entry_points={
         "vllm.platform_plugins": ["ascend = vllm_ascend:register"],
         "vllm.general_plugins": [
@@ -522,6 +522,12 @@ setup(
             "ascend_model_loader = vllm_ascend:register_model_loader",
             "ascend_service_profiling = vllm_ascend:register_service_profiling",
             "ascend_model = vllm_ascend:register_model",
+        ],
+        "vllm.endpoint_plugins": [
+            "ascend_systemone = vllm_ascend.entrypoints.systemone.serving:SystemOnePlugin",
+        ],
+        "console_scripts": [
+            "vllm-ascend-export-kev = vllm_ascend.decision.export:main",
         ],
         "ms_service_metric.providers": [
             "vllm-ascend = vllm_ascend.observability:get_metric_provider",

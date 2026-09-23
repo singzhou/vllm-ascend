@@ -100,6 +100,9 @@ def register_service_profiling():
 
 
 def register_model():
+    # Install the bounded APC capability before model config validation.
+    import vllm_ascend.patch.platform.patch_kev  # noqa: F401
+
     from .models import register_model
 
     register_model()

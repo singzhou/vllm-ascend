@@ -92,6 +92,10 @@ vllm-ascend有主干分支和开发分支。
 
 请参阅[版本策略](https://docs.vllm.ai/projects/ascend/en/latest/community/versioning_policy.html)了解更多详细信息。
 
+## Kev 决策引擎
+
+Kev 原生集成的请求协议、模型导出、调度与前缀缓存设计，以及多卡部署命令，参见[设计与部署说明](docs/design/kev_systemone_engine.md)。当前实现使用 V1 pooling runner 和 eager 执行，尚待 NPU 环境验证。
+
 ## 贡献
 
 请参考[CONTRIBUTING](https://docs.vllm.ai/projects/ascend/en/latest/developer_guide/contribution/index.html)文档了解更多关于开发环境搭建、功能测试以及 PR 提交规范的信息。

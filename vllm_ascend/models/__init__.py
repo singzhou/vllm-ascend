@@ -53,3 +53,11 @@ def register_model():
     ModelRegistry.register_model(
         "Eagle3LlamaForCausalLM", "vllm_ascend.models.llama_eagle3:AscendEagle3LlamaForCausalLM"
     )
+
+    # Kev adapts native backbones in a worker patch; no transformer layer copy.
+    from vllm_ascend.decision.config import KEV_ARCHITECTURES
+
+    for architecture in KEV_ARCHITECTURES:
+        ModelRegistry.register_model(
+            architecture, f"vllm_ascend.patch.worker.patch_kev:{architecture}"
+        )
