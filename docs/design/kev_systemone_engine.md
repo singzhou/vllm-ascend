@@ -64,7 +64,7 @@ logits[i] = dot(keys[i], query) / sqrt(head_dim)
 
 - `AscendKevQwen2ForDecision`：Qwen2/Qwen2.5 dense。
 - `AscendKevQwen3ForDecision`：Qwen3 dense。
-- `AscendKevQwen35ForDecision`：Qwen3.5 dense text。
+- `AscendKevQwen35ForDecision`：Qwen3.5 非 MoE 文本模型，采用 GDN 与 full attention 混合结构。dense（非 MoE）与 hybrid（注意力结构）是两个独立维度。
 
 wrapper 显式声明 `is_pooling_model=True`、`default_seq_pooling_type=LAST`，hybrid wrapper 显式声明 `attn_type=hybrid`，并提供原生 GDN state shape/dtype/copy 接口。构造函数显式接受 `vllm_config` 与 `prefix`，满足 vLLM `initialize_model` 的签名检查。
 
@@ -101,8 +101,8 @@ sequenceDiagram
     end
     loop scheduler step
         S->>K: get_computed_blocks(request)
-        K->>K: Kev lookup view 将读上限限制为 state_length
-        K-->>S: 原生 blocks / computed tokens / hybrid junction
+        K->>K: Kev lookup view 将读上限限制为 min(num_tokens−1, state_length)
+        K-->>S: 原生 blocks / computed tokens / shared_prefix_boundary
         S->>R: SchedulerOutput / block tables / scheduled tokens
         R->>B: 当前 causal chunk，native TP 与 GDN state
         B-->>R: final hidden states
@@ -129,7 +129,7 @@ vLLM scheduler 看到的是普通 pooling 子请求，因而直接获得 token b
 
 服务层负责有界 fan-out（默认 8）、父请求 admission（默认每 API 进程 32）、最多 64 questions、physical token budget 和 deadline。内部 DP 模式可按 state token hash 将 sibling requests 路由同一 replica；不同父请求可并行执行。
 
-失败、超时或 HTTP 断开时，取消剩余消费协程并调用原生 abort；不返回部分缺失的答案，不把缺失概率填零。collector 路由采用其内部 request ID 清理，外层仍保留 child ID 追踪。结果按输入 question 顺序返回。
+失败、超时或 HTTP 断开时，取消剩余消费协程并调用原生 abort；不返回部分缺失的答案，不把缺失概率填零。collector 路由采用其内部 request ID 清理，外层仍保留 child ID 追踪，并在 finally 中关闭 collector。当前快照的 `vllm/v1/engine/output_processor.py::RequestOutputCollector` 已静态确认包含 `request_id`、`get`、`get_nowait` 与 `close`；接口存在性已核实，取消与资源回收的运行行为仍需验证。结果按输入 question 顺序返回。
 
 `latency_ms` 包含计划、排队、执行和聚合。`usage.input_tokens` 保持逻辑口径：state 一次加所有 branch；物理调度 tokens 在无缓存时重复 state。`output_tokens` 仍是序列化答案的 token 数，不是生成量。
 
@@ -151,9 +151,11 @@ lookup_view.num_tokens = min(original.num_tokens, state_length + 1)
 
 由此原生 coordinator 收到的上限恰为 `min(original.num_tokens−1, state_length)`。**原始 Request、prompt_token_ids、block_hashes、调度进度都没有修改。** 这个 view 仅存活于同步缓存查询调用，不被放进 scheduler 队列。
 
-这样避免复制 vLLM 的 eviction、cache-event 和 hybrid 协商代码，也避免先命中深层 hybrid state 再裁剪到不存在快照的位置。返回值再次检查 computed length 和 shared-prefix junction 都不越过上限。
+这样避免复制 vLLM 的 eviction、cache-event 和 hybrid 协商代码，也避免先命中深层 hybrid state 再裁剪到不存在快照的位置。返回值再次检查 num_computed_tokens 和 shared_prefix_boundary 都不越过上限。
 
 这个适配依赖上述本地快照的 lookup 契约。upstream 若新增正式 `max_prefix_read_tokens` 参数，应替换 lookup view；若 lookup 改为从其他字段计算长度，必须更新该适配。
+
+patch 安装由 `ascend_model` general plugin 的 `register_model()` 和平台 patch 初始化两条路径触发，并带幂等守卫。当前 `EngineArgs` 初始化和 `AsyncEngineArgs.add_cli_args()` 均提前调用 `load_general_plugins()`，模型检查子进程也有加载入口；这是标准启动路径的静态证据。仍需对 serve、offline LLM 和 EngineCore 子进程做启动冒烟，确认 capability patch 在配置校验前生效。导入顺序可在具备依赖的环境中检查，不必与 NPU 数值验证绑定；若 patch 未安装，hybrid APC 可能在配置阶段被拒绝。
 
 ### 6.2 保留现有缓存所有权
 
@@ -243,9 +245,13 @@ vllm-ascend-export-kev \
 
 `--run` 也支持 Hub ID[@revision]。输出目录必须不存在。导出需要足够的 CPU 内存进行 FP32 merge。导出时使用原生 architecture 与 schema 2；不要直接用旧 `vllm_kev` 原型的导出配置启动。
 
+`--max-context` 默认 16384，表示每条 state + question branch 的服务长度上限，不从训练 run 自动推断。导出 manifest 的 `max_context_provenance` 记录数值、来源（显式 `cli` 或 `exporter_default`）和 `verified_against_training_run=false`。部署者应核对训练设置与目标上下文长度；该记录不表示已验证训练或模型位置上限。在线实际限制为 `min(kev_config.max_context, max_model_len)`，endpoint 初始化日志会显示该值。
+
 ### 10.2 attention-only：缓存 + TP2 + DP2
 
-下面示例占用四张 NPU。只验证单卡时将 TP/DP/local DP 都设为 1。
+必须显式设置 `VLLM_PLUGINS` 并包含 `ascend_systemone`；endpoint plugins 与 general plugins 的默认加载规则不同，未设置该变量时不会加载 endpoint。遗漏时 vLLM 可能正常启动，但 `/v1/systemone` 返回 404。自定义 allowlist 时也需保留模型注册所需的 `ascend_model` 等 Ascend 插件。此规则只针对 HTTP 路由，offline LLM 不要求加载 endpoint。
+
+下面示例占用四张 NPU。只验证单卡时将 TP/DP/local DP 都设为 1。启动后检查日志中的 `Kev endpoint /v1/systemone initialized`，并发送 §10.4 的请求确认路由和模型服务可用。
 
 ```bash
 export VLLM_USE_V2_MODEL_RUNNER=0
@@ -283,8 +289,8 @@ curl http://127.0.0.1:8009/v1/systemone \
 - Choice 使用未四舍五入概率选 argmax，保留输入选项顺序。
 - Score 返回有序 level 的期望；confidence 保持 Kev 近似公式。
 - temperature 沿用 softmax 后 clamp 再幂次归一化；不是文字生成采样 temperature。
-- 默认长度行为复刻 Kev，strict-length 导出选项可改为拒绝截断。
-- 422：参数/长度错误；404：模型 alias 不匹配；429：父请求容量不足；504：deadline。
+- 非 strict 模式会截断过长 state；strict-length 模式会拒绝过长 state。两种模式下，state 加 question branch 超过有效上下文上限都会报错，不会截断 branch。因此 max_context 配错既可能改变截断，也可能触发拒绝。
+- 422：参数/长度错误；404：模型 alias 不匹配；429：父请求容量不足；504：deadline；499：检测到客户端断连（连接已关闭时客户端通常无法收到响应）；503：路由已挂载但 Kev 服务未初始化。
 - head state 内存约 O(活跃 questions × options × head_dim)，不计入 KV token 统计；profile 覆盖最大 option 投影规模。
 - export manifest 的 temperature/预处理等配置改变后应重新发布模型配置，并记录新版本。
 
@@ -294,6 +300,21 @@ curl http://127.0.0.1:8009/v1/systemone \
 
 仓库 `bash format.sh ci` 已尝试，因本地缺少 pre-commit 无法执行完整流水线；对本次文件直接运行 Ruff。完整硬件验收仍需在目标环境完成。
 
-优先联调顺序：导出/单卡无缓存结果对齐 → 多 question 与 chunk → attention-only APC → hybrid align APC → TP → DP → 抢占/取消压力。V2/图模式/PP 是后续独立阶段。
+优先验证顺序：插件/patch 安装时序与 endpoint 启动冒烟 → 导出配置和上下文来源核对 → 导出/单卡无缓存结果对齐 → 多 question 与 chunk → attention-only APC → hybrid align APC → TP → DP → 抢占/取消压力。V2/图模式/PP 是后续独立阶段。
 
 本次实现的缓存 lookup view 与 native collector adapter 都是围绕现有 vLLM API 的窄适配。若 upstream 增加正式的 read-limit 和 encode DP-rank 参数，替换这两处适配即可，部署、调度和模型算子主体保持原生。
+
+### 12.1 审计结论的采纳与验证边界
+
+本次按原生引擎审计及复核结论更新，不将静态检查升级为运行验收：
+
+| 审计项 | 处理 |
+|---|---|
+| B1 dense/hybrid | 澄清两个独立维度，保留非 MoE 支持边界；不认定原描述为模型架构错误 |
+| B2 junction | 文档和时序图统一使用 `shared_prefix_boundary` |
+| B3 endpoint 加载 | 显式注明 allowlist、缺失路由的表现和启动检查方式 |
+| B4 patch 时序 | 记录标准入口源码证据，将多入口启动冒烟与硬件推理验证分开 |
+| B5 collector 接口 | 方法集已读源码确认；生命周期正确性保留运行验证 |
+| 上下文长度 | manifest 增加来源记录、CLI 帮助明确长度语义、服务日志显示有效值 |
+
+编码、位置与 readout 公式的静态一致性不等于推理数值等价。FP32 合并后 BF16 推理、TP 归约、分块执行、抢占恢复及 hybrid APC 均须与原始 Kev 参考结果对齐；容差应按 dtype 和内核路径分别记录。当前没有这些运行结果，也不能据接口存在性认定端到端执行已通过。

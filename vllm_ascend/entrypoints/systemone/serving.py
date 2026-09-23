@@ -230,3 +230,9 @@ class SystemOnePlugin:
         state.kev_service = None
         if engine_client is not None and is_kev_model(engine_client.model_config):
             state.kev_service = DecisionService(engine_client)
+            logger.info(
+                "Kev endpoint /v1/systemone initialized: effective max_context=%d "
+                "(min of checkpoint limit and max_model_len), strict_length=%s",
+                min(state.kev_service.config.max_context, state.kev_service.max_model_len),
+                state.kev_service.config.strict_length,
+            )

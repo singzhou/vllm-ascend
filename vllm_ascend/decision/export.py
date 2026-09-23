@@ -63,10 +63,11 @@ def export_checkpoint(args):
         revision = meta.get("base_revision")
     if Path(base).is_dir():
         revision = None
+    max_context = args.max_context if args.max_context is not None else KevConfig().max_context
     settings = KevConfig.from_dict(
         {
             "head_dim": meta.get("head_dim", 256),
-            "max_context": args.max_context,
+            "max_context": max_context,
             "temperature": args.temperature,
             "strict_length": args.strict_length,
             "date_facts": args.date_facts,
@@ -135,6 +136,11 @@ def export_checkpoint(args):
             "head_dtype": "float32",
             "architecture": ARCHITECTURES[model_type],
             "kev_config": asdict(settings),
+            "max_context_provenance": {
+                "value": settings.max_context,
+                "source": "cli" if args.max_context is not None else "exporter_default",
+                "verified_against_training_run": False,
+            },
             "source_hashes": {
                 p.name: sha256(p)
                 for p in sorted(run.iterdir())
@@ -157,7 +163,15 @@ def main():
     parser.add_argument("--base")
     parser.add_argument("--base-revision")
     parser.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
-    parser.add_argument("--max-context", type=int, default=16384)
+    parser.add_argument(
+        "--max-context",
+        type=int,
+        help=(
+            "Serving token limit for state plus each question branch "
+            f"(default: {KevConfig().max_context}); not inferred from training. "
+            "State may be truncated; overlong branches are rejected."
+        ),
+    )
     parser.add_argument("--max-shard-size", default="5GB")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--strict-length", action="store_true")
