@@ -14,7 +14,6 @@ class KevConfig:
     max_context: int = 16384
     max_questions: int = 64
     max_parent_tokens: int = 131072
-    max_concurrent_parents: int = 32
     question_concurrency: int = 8
     timeout_seconds: float = 120.0
     temperature: float = 1.0
@@ -26,6 +25,10 @@ class KevConfig:
     def from_dict(cls, data):
         if not isinstance(data, dict):
             raise TypeError("Exported model must contain a kev_config object")
+        # Schema-2 exports used to persist deployment admission capacity here.
+        # Ignore that obsolete key without mutating the checkpoint config;
+        # admission now follows the effective scheduler max_num_seqs setting.
+        data = {key: value for key, value in data.items() if key != "max_concurrent_parents"}
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown kev_config fields: {sorted(unknown)}")
@@ -37,7 +40,6 @@ class KevConfig:
             "max_context",
             "max_questions",
             "max_parent_tokens",
-            "max_concurrent_parents",
             "question_concurrency",
         ):
             value = getattr(result, name)

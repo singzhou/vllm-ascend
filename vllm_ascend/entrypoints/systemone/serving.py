@@ -86,6 +86,9 @@ class DecisionService:
         names = engine.model_config.served_model_name
         self.names = {names} if isinstance(names, str) else set(names or [])
         self.active_parents = 0
+        # Deployment capacity belongs to the serving configuration, not weights.
+        # Do not multiply by DP: affinity can route every parent to one replica.
+        self.max_concurrent_parents = engine.vllm_config.scheduler_config.max_num_seqs
         self.cache_reads = engine.vllm_config.cache_config.enable_prefix_caching
         parallel = engine.vllm_config.parallel_config
         self.dp_size = parallel.data_parallel_size
@@ -101,8 +104,12 @@ class DecisionService:
     async def evaluate(self, request, raw_request):
         if request.model not in self.names:
             raise HTTPException(404, f"Unknown served model: {request.model}")
-        if self.active_parents >= self.config.max_concurrent_parents:
-            raise HTTPException(429, "Kev parent request capacity reached")
+        if self.active_parents >= self.max_concurrent_parents:
+            raise HTTPException(
+                429,
+                f"Kev parent request capacity reached "
+                f"(per API process limit={self.max_concurrent_parents}, configured by --max-num-seqs)",
+            )
         self.active_parents += 1
         try:
             return await asyncio.wait_for(self._evaluate(request, raw_request), timeout=self.config.timeout_seconds)
@@ -232,7 +239,9 @@ class SystemOnePlugin:
             state.kev_service = DecisionService(engine_client)
             logger.info(
                 "Kev endpoint /v1/systemone initialized: effective max_context=%d "
-                "(min of checkpoint limit and max_model_len), strict_length=%s",
+                "(min of checkpoint limit and max_model_len), strict_length=%s, "
+                "parent request limit=%d per API process (scheduler max_num_seqs)",
                 min(state.kev_service.config.max_context, state.kev_service.max_model_len),
                 state.kev_service.config.strict_length,
+                state.kev_service.max_concurrent_parents,
             )

@@ -127,7 +127,7 @@ API 进程里没有模型 forward、HF KV cache 或显存模型副本。CPU 层�
 
 vLLM scheduler 看到的是普通 pooling 子请求，因而直接获得 token budget、跨父请求 batching、waiting/running 队列、chunked prefill 和抢占。父请求不是 scheduler 的原子大 batch，不必同时占据 Q 个 slot。
 
-服务层负责有界 fan-out（默认 8）、父请求 admission（默认每 API 进程 32）、最多 64 questions、physical token budget 和 deadline。内部 DP 模式可按 state token hash 将 sibling requests 路由同一 replica；不同父请求可并行执行。
+服务层负责有界 fan-out（默认 8）、父请求 admission（每 API 进程上限取部署后的 `scheduler_config.max_num_seqs`，由 `--max-num-seqs` 配置）、最多 64 questions、physical token budget 和 deadline。内部 DP 模式可按 state token hash 将 sibling requests 路由同一 replica；不同父请求可并行执行。
 
 失败、超时或 HTTP 断开时，取消剩余消费协程并调用原生 abort；不返回部分缺失的答案，不把缺失概率填零。collector 路由采用其内部 request ID 清理，外层仍保留 child ID 追踪，并在 finally 中关闭 collector。当前快照的 `vllm/v1/engine/output_processor.py::RequestOutputCollector` 已静态确认包含 `request_id`、`get`、`get_nowait` 与 `close`；接口存在性已核实，取消与资源回收的运行行为仍需验证。结果按输入 question 顺序返回。
 
@@ -326,3 +326,13 @@ curl http://127.0.0.1:8009/v1/systemone \
 `AscendKevQwen35ForDecision` 现实现该协议。纯文本 row 返回 CPU int64 的 `[3, N]` 位置张量，T/H/W 三个轴均为 `0..N-1`，position delta 为 0；这与上游 Qwen3-VL 的纯文本位置语义一致。非空 multimodal features 明确拒绝，SystemOne 中的结构化 JSON 仍按文本渲染。保留 checkpoint 的原始 RoPE 参数，不删除 `mrope_section`，不改变 runner、TP 调度或缓存恢复逻辑。
 
 更新 Python 源码后完整重启 API server 和所有 workers 即可；本修复不涉及自定义算子编译，也不要求重新导出已有 checkpoint。按原要求未新增单元测试；完成语法、接口源码与 Ruff 检查，仍需在报错环境重新发送首次请求，再验证 chunk/APC/TP 的结果。该修复不构成 NPU 端到端验收通过的声明。
+
+### 12.3 Issue #17：并发容量跟随部署配置
+
+父请求接入上限已从模型 `KevConfig` 中移除。`DecisionService` 读取当前服务实际生效的 `engine.vllm_config.scheduler_config.max_num_seqs`，因此部署使用 `--max-num-seqs 64` 时，每API进程允许最多64个同时未完成的SystemOne父请求，不再受模型文件中旧值32的限制。未显式指定CLI参数时，使用vLLM解析后的有效默认值。
+
+旧schema-2模型中的 `max_concurrent_parents` 字段被读取器忽略，其他未知字段仍拒绝；读取不会修改原模型配置。新导出配置和manifest中的 `kev_config` 不再写入此字段。无需手工修改模型JSON、重新导出权重或重编译算子，只需更新服务代码并完整重启。此前在issue中建议修改模型JSON上限的做法已被本实现替代。
+
+启动日志打印有效接入容量；429响应也指出每API进程上限及 `--max-num-seqs` 来源。接入仍是超过上限立即拒绝，未新增等待队列。DP不自动乘大此上限，同state亲和可能集中在一个副本；多API进程各自计数，该限制不是跨进程全局配额。
+
+父请求数与模型序列数保持概念上的区别：本实现用同一部署参数约束入口容量，但一个父请求可以产生多个question序列，实际执行仍由vLLM按序列数、token预算与KV容量调度。单行单题Excel请求接入64不保证64条序列在同一步执行。question fan-out及deadline保持现有行为。
