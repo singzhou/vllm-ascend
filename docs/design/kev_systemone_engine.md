@@ -17,7 +17,7 @@ Kev 在这里是一种 **原生注册的 pooling 模型能力**。HTTP 层只负
 | 安装入口 | `setup.py` | 注册 SystemOne endpoint、离线导出命令和导出依赖 extra |
 | 模型发现 | `vllm_ascend/models/__init__.py` | 通过现有 `ascend_model` 插件注册三个 Kev architecture |
 | 模型适配 | `vllm_ascend/patch/worker/patch_kev.py` | 组合 native Qwen backbone，接入 head、权重 loader 和 hybrid state 接口 |
-| 协议入口 | `vllm_ascend/entrypoints/systemone/` | TypeSafe 类 schema、父请求、并发提交、DP 亲和、取消和答案转换 |
+| 协议入口 | `vllm_ascend/entrypoints/systemone/` | TypeSafe 类 schema、父请求、原生批量提交与取消、答案转换 |
 | 编码与配置 | `vllm_ascend/decision/` | 无 Kev 包依赖的编码、row planner、readout metadata 和导出器 |
 | 推理算子 | `vllm_ascend/ops/kev_pointer.py` | FP32 pointer projection、跨 chunk 累积、变长 logits |
 | 缓存适配 | `vllm_ascend/patch/platform/patch_kev.py` | 查询前限制前缀读取长度、Kev hybrid pooling capability |
@@ -94,7 +94,7 @@ sequenceDiagram
     participant B as Native Qwen backbone
     participant H as KevPointerPooler
     C->>A: POST /v1/systemone
-    A->>A: 全量校验、编码、question rows、选择 DP replica
+    A->>A: 全量校验、编码、question rows
     loop 有界并发提交 question
         A->>E: pooling request + token IDs + ReadoutSpec
         E->>S: 原生请求队列
@@ -127,9 +127,11 @@ API 进程里没有模型 forward、HF KV cache 或显存模型副本。CPU 层�
 
 vLLM scheduler 看到的是普通 pooling 子请求，因而直接获得 token budget、跨父请求 batching、waiting/running 队列、chunked prefill 和抢占。父请求不是 scheduler 的原子大 batch，不必同时占据 Q 个 slot。
 
-服务层负责有界 fan-out（默认 8）、最多 64 questions、physical token budget 和 deadline。内部 DP 模式可按 state token hash 将 sibling requests 路由同一 replica；不同父请求可并行执行。
+服务层仅负责协议转换、question rows 和结果聚合，不另设HTTP接入容量、父请求token总预算、question数量上限、提交并发上限或默认120秒deadline。每道question通过原生 `engine.encode()` 提交，全部generator使用原生 `merge_async_iterators()` 收集，与native pooling的批量请求路径一致。
 
-失败、超时或 HTTP 断开时，取消剩余消费协程并调用原生 abort；不返回部分缺失的答案，不把缺失概率填零。collector 路由采用其内部 request ID 清理，外层仍保留 child ID 追踪，并在 finally 中关闭 collector。当前快照的 `vllm/v1/engine/output_processor.py::RequestOutputCollector` 已静态确认包含 `request_id`、`get`、`get_nowait` 与 `close`；接口存在性已核实，取消与资源回收的运行行为仍需验证。结果按输入 question 顺序返回。
+HTTP路由复用 `validate_json_request`、`with_cancellation` 与 `load_aware_call`。断连监听、负载统计和JSON请求验证沿用原生实现，不再轮询 `is_disconnected()` 或构造499响应。Engine请求ID、DP路由、abort及collector生命周期由 `encode()` 管理；没有自定义 `add_request(data_parallel_rank=...)` 适配。父请求结果按输入question顺序聚合，不填补缺失结果。
+
+编码规划和答案格式化使用renderer的共享executor；支持原生 `priority`、`cache_salt` 字段，沿用 `X-Request-Id` 及trace headers。模型名校验遵循 `VLLM_SKIP_MODEL_NAME_VALIDATION`；校验/引擎异常交由API server既有异常处理器处理。
 
 `latency_ms` 包含计划、排队、执行和聚合。`usage.input_tokens` 保持逻辑口径：state 一次加所有 branch；物理调度 tokens 在无缓存时重复 state。`output_tokens` 仍是序列化答案的 token 数，不是生成量。
 
@@ -206,11 +208,7 @@ bounded APC 保证新请求或全量重算的恢复点不超过 `state_length`�
 
 ### 8.2 DP
 
-保留 vLLM DP 的 executor、EngineCore client 和副本部署。配置 `dp_affinity=true`（默认）时，内部 DP 路由选择 `hash(state_tokens) % data_parallel_size`，同 state 的 siblings 与重复父请求偏向同一 cache。
-
-当前 `EngineClient.encode` 不暴露 DP rank，而 native `AsyncLLM.add_request` 暴露。因此 endpoint 内部 adapter 使用 add_request 和原生 collector，负责完整结果消费和异常 abort；没有绕过 scheduler 或直接调用 worker。
-
-`dp_affinity=false` 时直接使用原生 encode/load balancing。外部和 hybrid LB 模式不自行指定跨节点 rank，沿既有路由运行；如需 sibling 亲和，由外部部署按整个父请求路由。hash affinity 可能产生热点，当前没有动态溢出策略。
+DP使用原生 `EngineClient.encode()` 的负载均衡和部署路由。移除按state hash选择replica的逻辑，不向 `add_request` 指定DP rank；旧checkpoint中的 `dp_affinity` 字段忽略，导出器移除对应开关。同state请求不再保证落到同一个副本，其缓存复用取决于原生路由与各副本的本地缓存。不能为追求命中率覆盖部署的负载均衡行为。
 
 ### 8.3 当前边界
 
@@ -290,7 +288,7 @@ curl http://127.0.0.1:8009/v1/systemone \
 - Score 返回有序 level 的期望；confidence 保持 Kev 近似公式。
 - temperature 沿用 softmax 后 clamp 再幂次归一化；不是文字生成采样 temperature。
 - 非 strict 模式会截断过长 state；strict-length 模式会拒绝过长 state。两种模式下，state 加 question branch 超过有效上下文上限都会报错，不会截断 branch。因此 max_context 配错既可能改变截断，也可能触发拒绝。
-- 422：参数/长度错误；404：模型 alias 不匹配；504：deadline；499：检测到客户端断连（连接已关闭时客户端通常无法收到响应）；503：路由已挂载但 Kev 服务未初始化。
+- 参数校验、模型名错误和引擎异常使用原生API server错误处理；Kev不再合成并发429、deadline 504或断连499。路由已挂载但Kev服务未初始化时仍返回503。
 - head state 内存约 O(活跃 questions × options × head_dim)，不计入 KV token 统计；profile 覆盖最大 option 投影规模。
 - export manifest 的 temperature/预处理等配置改变后应重新发布模型配置，并记录新版本。
 
@@ -302,7 +300,7 @@ curl http://127.0.0.1:8009/v1/systemone \
 
 优先验证顺序：插件/patch 安装时序与 endpoint 启动冒烟 → 导出配置和上下文来源核对 → 导出/单卡无缓存结果对齐 → 多 question 与 chunk → attention-only APC → hybrid align APC → TP → DP → 抢占/取消压力。V2/图模式/PP 是后续独立阶段。
 
-本次实现的缓存 lookup view 与 native collector adapter 都是围绕现有 vLLM API 的窄适配。若 upstream 增加正式的 read-limit 和 encode DP-rank 参数，替换这两处适配即可，部署、调度和模型算子主体保持原生。
+缓存lookup view仍是围绕现有vLLM API的窄适配；若upstream提供正式read-limit参数，可替换该适配。collector和DP路由已完全交回原生encode路径。
 
 ### 12.1 审计结论的采纳与验证边界
 
@@ -314,7 +312,7 @@ curl http://127.0.0.1:8009/v1/systemone \
 | B2 junction | 文档和时序图统一使用 `shared_prefix_boundary` |
 | B3 endpoint 加载 | 显式注明 allowlist、缺失路由的表现和启动检查方式 |
 | B4 patch 时序 | 记录标准入口源码证据，将多入口启动冒烟与硬件推理验证分开 |
-| B5 collector 接口 | 方法集已读源码确认；生命周期正确性保留运行验证 |
+| B5 collector 接口 | 已删除自定义collector适配，直接复用原生encode生命周期 |
 | 上下文长度 | manifest 增加来源记录、CLI 帮助明确长度语义、服务日志显示有效值 |
 
 编码、位置与 readout 公式的静态一致性不等于推理数值等价。FP32 合并后 BF16 推理、TP 归约、分块执行、抢占恢复及 hybrid APC 均须与原始 Kev 参考结果对齐；容差应按 dtype 和内核路径分别记录。当前没有这些运行结果，也不能据接口存在性认定端到端执行已通过。
@@ -333,6 +331,19 @@ curl http://127.0.0.1:8009/v1/systemone \
 
 旧schema-2模型中的 `max_concurrent_parents` 字段继续被忽略，其他未知字段仍拒绝；读取不会修改原模型配置。新导出配置不写入该字段。此前将HTTP接入上限绑定到 `max_num_seqs` 的实现也已撤销。更新Python代码后完整重启服务即可，无需修改模型JSON、重导出权重或重编译算子。
 
-每个父请求仍按 `question_concurrency` 有界提交questions，其余question等待该父请求的worker。所有父请求可以并发提交；DP路由、序列执行、token预算与KV分配由原生引擎处理。默认state亲和仍可能将同state请求集中到一个DP副本。
+后续逐项对照原生pooling后，还移除了 `question_concurrency`、`timeout_seconds`、`dp_affinity`、`max_questions` 和 `max_parent_tokens`。旧schema-2中的这些字段忽略，新导出不再包含它们。不存在Kev自定义排队超时，等待期间的客户端/代理超时仍取决于部署；客户端断开后原生取消路径终止对应请求。
 
-父请求deadline仍从请求处理开始计时，覆盖编码、排队、推理与聚合（默认120秒），不是无限期等待。超过deadline返回504，并取消/abort待完成子请求；断连和其它异常仍走原有清理路径。去掉的是Kev自定义并发429，代理层的限流或系统资源错误不在本变更范围。首次部署应验证请求数大于max_num_seqs时依次完成，以及排队中的超时/断连能正确清理。
+### 12.4 请求行为核对边界
+
+| 行为 | 对应原生实现 |
+|---|---|
+| 入队、等待、DP路由、collector | `EngineClient.encode` / `AsyncLLM.encode` |
+| 多question并发提交与收集 | `merge_async_iterators`，与 `PoolingBaseServing` 批处理一致 |
+| HTTP断连与负载统计 | pooling路由同款 `with_cancellation` / `load_aware_call` |
+| JSON验证、异常响应 | `validate_json_request` 与API server全局异常处理器 |
+| CPU预处理/后处理 | renderer共享executor与 `make_async` |
+| priority、cache_salt、request ID、trace | 原生字段与header路径 |
+
+“与原生一致”指不另加调度、路由、超时或并发策略，并复用上述生命周期实现；并不意味着SystemOne的schema和响应与 `/pooling` 相同。Kev的控制token编码、state截断语义、每题255 options约束、pointer readout和state范围APC读取仍是必要的模型适配，V1/eager等已声明的模型运行限制也仍存在。
+
+静态接口核对不能替代NPU验收。还需实际验证超过max_num_seqs的并发请求完成、DP负载分配、HTTP断连时等待/运行请求清理、单题失败时其它子请求取消，以及大批量questions的内存与延迟。未对所有原生部署模式宣称端到端等价。

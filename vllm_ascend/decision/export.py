@@ -71,7 +71,6 @@ def export_checkpoint(args):
             "temperature": args.temperature,
             "strict_length": args.strict_length,
             "date_facts": args.date_facts,
-            "dp_affinity": not args.no_dp_affinity,
         }
     )
     tokenizer = AutoTokenizer.from_pretrained(base, revision=revision)
@@ -176,7 +175,6 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--strict-length", action="store_true")
     parser.add_argument("--date-facts", action="store_true")
-    parser.add_argument("--no-dp-affinity", action="store_true")
     export_checkpoint(parser.parse_args())
 
 

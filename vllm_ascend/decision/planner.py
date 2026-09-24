@@ -64,8 +64,6 @@ def validate_tokenizer(tokenizer, expected_ids):
 
 
 def plan_request(request, tokenizer, config, max_model_len):
-    if len(request.questions) > config.max_questions:
-        raise ValueError(f"At most {config.max_questions} questions are allowed")
     if config.date_facts:
         request = request.model_copy(update={"state": with_date_facts(request.state)})
     record, metadata = to_record(request)
@@ -78,9 +76,6 @@ def plan_request(request, tokenizer, config, max_model_len):
         strict=config.strict_length,
     )
     state, _, branches = rows_of(encoded)
-    physical_tokens = sum(len(state) + len(branch["ids"]) for branch in branches)
-    if physical_tokens > config.max_parent_tokens:
-        raise ValueError(f"Parent exceeds {config.max_parent_tokens} physical prompt tokens")
     rows = []
     for branch in branches:
         tokens = state + branch["ids"]

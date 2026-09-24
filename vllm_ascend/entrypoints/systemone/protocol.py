@@ -51,6 +51,8 @@ Question = Noul | Choice | Score
 class SystemOneRequest(BaseModel):
     state: JSONContent
     model: str = "kev-latest"
+    priority: int = 0
+    cache_salt: str | None = None
     questions: dict[str, Question] = Field(min_length=1)
 
 

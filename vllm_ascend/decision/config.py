@@ -12,23 +12,25 @@ class KevConfig:
     schema_version: int = 2
     head_dim: int = 256
     max_context: int = 16384
-    max_questions: int = 64
-    max_parent_tokens: int = 131072
-    question_concurrency: int = 8
-    timeout_seconds: float = 120.0
     temperature: float = 1.0
     strict_length: bool = False
     date_facts: bool = False
-    dp_affinity: bool = True
 
     @classmethod
     def from_dict(cls, data):
         if not isinstance(data, dict):
             raise TypeError("Exported model must contain a kev_config object")
-        # Schema-2 exports used to persist deployment admission capacity here.
-        # Ignore that obsolete key without mutating the checkpoint config;
-        # pending requests now wait in the native engine scheduler queue.
-        data = {key: value for key, value in data.items() if key != "max_concurrent_parents"}
+        # Legacy schema-2 exports persisted service policies. Ignore these
+        # without mutating the input; submission/routing now remain native.
+        obsolete = {
+            "max_concurrent_parents",
+            "max_questions",
+            "max_parent_tokens",
+            "question_concurrency",
+            "timeout_seconds",
+            "dp_affinity",
+        }
+        data = {key: value for key, value in data.items() if key not in obsolete}
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown kev_config fields: {sorted(unknown)}")
@@ -38,22 +40,19 @@ class KevConfig:
         for name in (
             "head_dim",
             "max_context",
-            "max_questions",
-            "max_parent_tokens",
-            "question_concurrency",
         ):
             value = getattr(result, name)
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         if result.max_context < 2:
             raise ValueError("max_context must be at least two")
-        for name in ("timeout_seconds", "temperature"):
+        for name in ("temperature",):
             value = getattr(result, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be numeric")
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
-        for name in ("strict_length", "date_facts", "dp_affinity"):
+        for name in ("strict_length", "date_facts"):
             if type(getattr(result, name)) is not bool:
                 raise ValueError(f"{name} must be a boolean")
         return result
