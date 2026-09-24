@@ -318,3 +318,11 @@ curl http://127.0.0.1:8009/v1/systemone \
 | 上下文长度 | manifest 增加来源记录、CLI 帮助明确长度语义、服务日志显示有效值 |
 
 编码、位置与 readout 公式的静态一致性不等于推理数值等价。FP32 合并后 BF16 推理、TP 归约、分块执行、抢占恢复及 hybrid APC 均须与原始 Kev 参考结果对齐；容差应按 dtype 和内核路径分别记录。当前没有这些运行结果，也不能据接口存在性认定端到端执行已通过。
+
+### 12.2 Issue #16：Qwen3.5 文本 M-RoPE 接口
+
+实际部署在首次处理请求时触发 `AssertionError: M-RoPE support is not implemented.`。配置包含 `mrope_section` 时，原生 runner 会调用外层模型的 `get_mrope_input_positions`；此前 Kev wrapper 只适配了 hybrid state 接口，遗漏了 `SupportsMRoPE`。
+
+`AscendKevQwen35ForDecision` 现实现该协议。纯文本 row 返回 CPU int64 的 `[3, N]` 位置张量，T/H/W 三个轴均为 `0..N-1`，position delta 为 0；这与上游 Qwen3-VL 的纯文本位置语义一致。非空 multimodal features 明确拒绝，SystemOne 中的结构化 JSON 仍按文本渲染。保留 checkpoint 的原始 RoPE 参数，不删除 `mrope_section`，不改变 runner、TP 调度或缓存恢复逻辑。
+
+更新 Python 源码后完整重启 API server 和所有 workers 即可；本修复不涉及自定义算子编译，也不要求重新导出已有 checkpoint。按原要求未新增单元测试；完成语法、接口源码与 Ruff 检查，仍需在报错环境重新发送首次请求，再验证 chunk/APC/TP 的结果。该修复不构成 NPU 端到端验收通过的声明。

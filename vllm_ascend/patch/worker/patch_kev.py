@@ -5,7 +5,7 @@
 
 import torch
 from torch import nn
-from vllm.model_executor.models.interfaces import HasInnerState, IsHybrid
+from vllm.model_executor.models.interfaces import HasInnerState, IsHybrid, SupportsMRoPE
 from vllm.model_executor.models.utils import AutoWeightsLoader
 
 from vllm_ascend.decision.config import KevConfig, validate_runtime
@@ -73,7 +73,7 @@ class AscendKevQwen3ForDecision(KevDecisionModel):
         super().__init__(vllm_config=vllm_config, prefix=prefix)
 
 
-class AscendKevQwen35ForDecision(KevDecisionModel, HasInnerState, IsHybrid):
+class AscendKevQwen35ForDecision(KevDecisionModel, HasInnerState, IsHybrid, SupportsMRoPE):
     attn_type = "hybrid"
 
     def __init__(self, *, vllm_config, prefix=""):
@@ -81,6 +81,15 @@ class AscendKevQwen35ForDecision(KevDecisionModel, HasInnerState, IsHybrid):
 
         self.backbone_type = Qwen3_5Model
         super().__init__(vllm_config=vllm_config, prefix=prefix)
+
+    def get_mrope_input_positions(self, input_tokens, mm_features):
+        # Text-only exports retain mrope_section in their RoPE config, so the
+        # runner requires this interface on the outer wrapper, not the backbone.
+        # For text, T/H/W all use the same absolute positions (delta = 0).
+        if mm_features:
+            raise ValueError("Kev decision models only support text M-RoPE inputs")
+        positions = torch.arange(len(input_tokens), dtype=torch.long, device="cpu")
+        return positions.unsqueeze(0).repeat(3, 1), 0
 
     @classmethod
     def get_mamba_state_dtype_from_config(cls, vllm_config):
