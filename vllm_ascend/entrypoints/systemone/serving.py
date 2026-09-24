@@ -85,10 +85,6 @@ class DecisionService:
         self.max_model_len = engine.model_config.max_model_len
         names = engine.model_config.served_model_name
         self.names = {names} if isinstance(names, str) else set(names or [])
-        self.active_parents = 0
-        # Deployment capacity belongs to the serving configuration, not weights.
-        # Do not multiply by DP: affinity can route every parent to one replica.
-        self.max_concurrent_parents = engine.vllm_config.scheduler_config.max_num_seqs
         self.cache_reads = engine.vllm_config.cache_config.enable_prefix_caching
         parallel = engine.vllm_config.parallel_config
         self.dp_size = parallel.data_parallel_size
@@ -104,19 +100,12 @@ class DecisionService:
     async def evaluate(self, request, raw_request):
         if request.model not in self.names:
             raise HTTPException(404, f"Unknown served model: {request.model}")
-        if self.active_parents >= self.max_concurrent_parents:
-            raise HTTPException(
-                429,
-                f"Kev parent request capacity reached "
-                f"(per API process limit={self.max_concurrent_parents}, configured by --max-num-seqs)",
-            )
-        self.active_parents += 1
+        # Submit children to the native engine queue. max_num_seqs limits
+        # scheduler execution, not the number of HTTP requests allowed to wait.
         try:
             return await asyncio.wait_for(self._evaluate(request, raw_request), timeout=self.config.timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise HTTPException(504, "Kev request deadline exceeded") from exc
-        finally:
-            self.active_parents -= 1
 
     async def _evaluate(self, request, raw_request):
         started = time.perf_counter()
@@ -240,8 +229,7 @@ class SystemOnePlugin:
             logger.info(
                 "Kev endpoint /v1/systemone initialized: effective max_context=%d "
                 "(min of checkpoint limit and max_model_len), strict_length=%s, "
-                "parent request limit=%d per API process (scheduler max_num_seqs)",
+                "requests wait in the native vLLM scheduler queue",
                 min(state.kev_service.config.max_context, state.kev_service.max_model_len),
                 state.kev_service.config.strict_length,
-                state.kev_service.max_concurrent_parents,
             )

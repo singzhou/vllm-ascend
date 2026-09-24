@@ -27,7 +27,7 @@ class KevConfig:
             raise TypeError("Exported model must contain a kev_config object")
         # Schema-2 exports used to persist deployment admission capacity here.
         # Ignore that obsolete key without mutating the checkpoint config;
-        # admission now follows the effective scheduler max_num_seqs setting.
+        # pending requests now wait in the native engine scheduler queue.
         data = {key: value for key, value in data.items() if key != "max_concurrent_parents"}
         unknown = set(data) - {f.name for f in fields(cls)}
         if unknown:
