@@ -306,13 +306,13 @@ class NPUPlatform(Platform):
         # device tensor the verify kernel has just written, so it wants the
         # operator that takes those lengths on device. It is a separate backend
         # rather than a mode of the GQA one because that is the level the
-        # difference lives at -- see vllm_ascend/attention/fia_sink_v1.py for
+        # difference lives at -- see vllm_ascend/attention/fa4_v1.py for
         # what follows from it. Opt-in through VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK.
         if key == (False, False) and not attn_selector_config.use_pcp:
-            from vllm_ascend.attention.fia_sink_v1 import fia_sink_selected
+            from vllm_ascend.attention.fa4_v1 import fa4_selected
 
-            if fia_sink_selected(attn_selector_config):
-                return "vllm_ascend.attention.fia_sink_v1.AscendFIASinkBackend"
+            if fa4_selected(attn_selector_config):
+                return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
 
         if attn_selector_config.use_pcp:
             pcp_backend_map = {

@@ -818,3 +818,31 @@ Upstream vLLM's synthetic path draws the per-token uniform numbers with `tl_rand
 - **MRV2** (`vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py`, used when the V2 model runner is enabled): the uniform draw is generated **inside** `_probabilistic_rejection_kernel` with `SYNTHETIC_MODE=True`, using a 1-element-block fp32 `tl.rand` clamped to `[2^-31, 1)` — equivalent to upstream's `includes_zero=False` semantics. Both greedy and sampling temperatures are supported, and the first rejected position is followed by a resampled/bonus token from the target distribution, as in `standard` mode.
 
 The configuration interface (`rejection_sample_method`, `synthetic_acceptance_rates`, `synthetic_acceptance_length`) is identical on both paths.
+
+## FA4 attention for parallel drafts
+
+On Ascend910B/C, set `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` to use the
+`AscendFA4Backend` for non-causal DSpark/DFlash draft attention. This legacy
+switch now selects FA4 instead of FIA sink, including for head dimension 256.
+The default remains `0`. Install the `flash-attention-npu` wheel exposing
+`flash_attn_npu_4.get_scheduler_metadata` and `flash_attn_varlen_func` on each
+worker; the FA4 path does not require `omni_custom_ops`.
+
+The backend keeps KV lengths on device and captures AICPU metadata generation
+with attention, so ACL graph replay uses the updated lengths after verification.
+It uses the shared NHD paged KV cache and FP16/BF16 inputs. Sliding-window,
+learnable-sink, MLA, PCP and Ascend310P layers retain their existing selection.
+Causal DFlash KV groups retain the ordinary attention path. Startup logs include
+`Ascend FA4 backend selected` when a draft uses this backend.
+
+After installing the wheel, validate eager accuracy and graph replay with changed
+KV lengths (head dimensions 128/256, FP16/BF16, and padded requests):
+
+```bash
+pytest -sv tests/e2e/pull_request/one_card/test_fa4_draft_attention.py
+```
+
+For serving performance, compare the same DSpark/DFlash workload with the switch
+set to `0` and `1`, keeping the model, speculative token count, request lengths,
+concurrency and graph mode fixed. Check output accuracy, accepted draft tokens,
+time per output token and throughput before enabling it for production workloads.
