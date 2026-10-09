@@ -169,11 +169,12 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_DSPARK_EAGER_AV_LOG_INTERVAL": lambda: int(
         os.getenv("VLLM_ASCEND_DSPARK_EAGER_AV_LOG_INTERVAL", "50")
     ),
-    # Legacy switch name: now selects FA4 for the parallel-drafting (DSpark /
-    # DFlash) draft model's non-causal attention, including head_dim=256. Requires
-    # flash_attn_npu_4 with AICPU scheduler metadata support on Ascend910. Keeps
-    # seq_lens on device in the draft hot path. Values: 0/1; default 0. Not sensitive.
-    "VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK": lambda: bool(int(os.getenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0"))),
+    # Non-causal parallel-drafting (DSpark / DFlash) attention backend:
+    # 0 = ordinary attention (default), 1 = omni FIA sink (omni_custom_ops),
+    # 2 = FA4 (flash_attn_npu_4, including head_dim=256 on Ascend910).
+    # Both custom backends keep seq_lens on device and tile on AICPU.
+    # Valid values: 0/1/2. Not sensitive.
+    "VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK": lambda: int(os.getenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0")),
     # Minimum KV-cache group width (layers per group). 0 disables the override
     # and keeps upstream grouping exactly. A positive value raises the group
     # width to at least this many layers, so a small heterogeneous draft bucket

@@ -14,6 +14,7 @@
 
 import inspect
 import os
+from unittest.mock import patch
 
 import vllm_ascend.envs as envs_ascend
 from tests.ut.base import TestBase
@@ -79,3 +80,15 @@ class TestEnvVariables(TestBase):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = original_val
+
+    def test_dspark_attention_backend_mode(self):
+        name = "VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK"
+        with patch.dict(os.environ):
+            os.environ.pop(name, None)
+            self.assertEqual(getattr(envs_ascend, name), 0)
+            for mode in (0, 1, 2):
+                with self.subTest(mode=mode):
+                    os.environ[name] = str(mode)
+                    value = getattr(envs_ascend, name)
+                    self.assertIs(type(value), int)
+                    self.assertEqual(value, mode)

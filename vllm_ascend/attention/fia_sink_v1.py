@@ -73,7 +73,7 @@ _fia_sink_ops_registered = False
 # capability checks are intentionally delegated to the custom op so this
 # integration does not narrow the operator's supported domain to one validated
 # model shape.
-_FIA_SINK_ENABLED = bool(envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK)
+_FIA_SINK_ENABLED = envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK == 1
 
 
 def _ensure_fia_sink_ops_registered() -> None:

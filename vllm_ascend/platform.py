@@ -307,10 +307,14 @@ class NPUPlatform(Platform):
         # operator that takes those lengths on device. It is a separate backend
         # rather than a mode of the GQA one because that is the level the
         # difference lives at -- see vllm_ascend/attention/fa4_v1.py for
-        # what follows from it. Opt-in through VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK.
+        # what follows from it. VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK selects
+        # ordinary attention (0), omni FIA sink (1), or FA4 (2).
         if key == (False, False) and not attn_selector_config.use_pcp:
             from vllm_ascend.attention.fa4_v1 import fa4_selected
+            from vllm_ascend.attention.fia_sink_v1 import fia_sink_selected
 
+            if fia_sink_selected(attn_selector_config):
+                return "vllm_ascend.attention.fia_sink_v1.AscendFIASinkBackend"
             if fa4_selected(attn_selector_config):
                 return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
 

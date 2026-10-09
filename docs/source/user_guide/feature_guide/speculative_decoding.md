@@ -819,12 +819,17 @@ Upstream vLLM's synthetic path draws the per-token uniform numbers with `tl_rand
 
 The configuration interface (`rejection_sample_method`, `synthetic_acceptance_rates`, `synthetic_acceptance_length`) is identical on both paths.
 
-## FA4 attention for parallel drafts
+## Attention backend selection for parallel drafts
 
-On Ascend910B/C, set `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` to use the
-`AscendFA4Backend` for non-causal DSpark/DFlash draft attention. This legacy
-switch now selects FA4 instead of FIA sink, including for head dimension 256.
-The default remains `0`. Install the `flash-attention-npu` wheel exposing
+Set `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK` to select non-causal DSpark/DFlash
+draft attention:
+
+- `0`: ordinary attention (default).
+- `1`: omni FIA sink (`AscendFIASinkBackend`), requiring `omni_custom_ops` and
+  the matching CANN custom OPP environment.
+- `2`: FA4 (`AscendFA4Backend`) on Ascend910B/C, including head dimension 256.
+
+For FA4, install the `flash-attention-npu` wheel exposing
 `flash_attn_npu_4.get_scheduler_metadata` and `flash_attn_varlen_func` on each
 worker; the FA4 path does not require `omni_custom_ops`.
 
@@ -843,6 +848,6 @@ pytest -sv tests/e2e/pull_request/one_card/test_fa4_draft_attention.py
 ```
 
 For serving performance, compare the same DSpark/DFlash workload with the switch
-set to `0` and `1`, keeping the model, speculative token count, request lengths,
+set to `0`, `1` or `2` as supported by the model, keeping the model, speculative token count, request lengths,
 concurrency and graph mode fixed. Check output accuracy, accepted draft tokens,
 time per output token and throughput before enabling it for production workloads.

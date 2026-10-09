@@ -12,7 +12,7 @@ from vllm.v1.attention.selector import AttentionSelectorConfig  # type: ignore
 
 from tests.ut.base import TestBase
 from vllm_ascend.ascend_forward_context import MoECommType, override_mrv2_in_profile_run
-from vllm_ascend.attention import fa4_v1
+from vllm_ascend.attention import fa4_v1, fia_sink_v1
 from vllm_ascend.device.hardware_profile import get_hardware_profile
 from vllm_ascend.platform import (
     NPUPlatform,
@@ -2047,8 +2047,15 @@ class TestNPUPlatform(TestBase):
         )
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_parallel_draft_legacy_sink_switch_selects_fa4(enabled):
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        (0, "vllm_ascend.attention.attention_v1.AscendAttentionBackend"),
+        (1, "vllm_ascend.attention.fia_sink_v1.AscendFIASinkBackend"),
+        (2, "vllm_ascend.attention.fa4_v1.AscendFA4Backend"),
+    ],
+)
+def test_parallel_draft_attention_backend_selection(mode, expected):
     selector = SimpleNamespace(
         use_mla=False,
         use_sparse=False,
@@ -2058,16 +2065,12 @@ def test_parallel_draft_legacy_sink_switch_selects_fa4(enabled):
         has_sink=False,
     )
     with (
-        patch.object(fa4_v1, "_FA4_ENABLED", enabled),
+        patch.object(fa4_v1, "_FA4_ENABLED", mode == 2),
+        patch.object(fia_sink_v1, "_FIA_SINK_ENABLED", mode == 1),
         patch("vllm_ascend.platform._validate_fa3_backend", return_value=False),
         patch(
             "vllm_ascend.platform.get_current_hardware_profile", return_value=get_hardware_profile(AscendDeviceType.A3)
         ),
     ):
         selected = NPUPlatform.get_attn_backend_cls(None, selector)
-    expected = (
-        "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
-        if enabled
-        else "vllm_ascend.attention.attention_v1.AscendAttentionBackend"
-    )
     assert selected == expected

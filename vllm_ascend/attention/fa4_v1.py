@@ -17,7 +17,7 @@
 #
 """FA4 AICPU tiling for non-causal parallel-drafting (DSpark / DFlash).
 
-The legacy VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK switch now selects this backend.
+VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=2 selects this backend.
 Metadata and attention are captured together so replay reads the rejected-token
 adjusted KV lengths on device. KV layout and registry identity stay inherited
 from AscendAttentionBackend, as the draft shares the target's cache pool.
@@ -40,7 +40,7 @@ from vllm_ascend.attention.attention_v1 import (
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 
 _FA4_META_CACHE_ATTR = "_ascend_fa4_meta_cache"
-_FA4_ENABLED = bool(envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK)
+_FA4_ENABLED = envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK == 2
 
 
 def _load_fa4() -> ModuleType:
