@@ -372,6 +372,7 @@ def test_adaptive_verification_pads_fia_query_boundaries(
 ):
     """Device-reallocated DSpark queries still match the FULL graph shape."""
     runner = NPUModelRunner.__new__(NPUModelRunner)
+    runner.max_num_reqs = 4
     num_reqs = len(query_lens)
     query_start_loc = np.full(max(num_reqs_padded + 2, 5), sum(query_lens), dtype=np.int32)
     query_start_loc[: num_reqs + 1] = np.cumsum([0, *query_lens])
@@ -1948,3 +1949,9 @@ def test_flashmla_dcp_bypass_preserves_device_postprocess_and_prefill_lengths(dc
     torch.testing.assert_close(runner.req_states.num_computed_tokens_cpu, host_counts)
     assert runner.input_buffers.seq_lens_cpu.tolist() == [772, 35]
     assert runner.req_states.num_computed_tokens.gpu.tolist() == [768 - num_rejected, 32]
+
+
+def test_adaptive_fia_padding_reports_incompatible_graph_capacity():
+    runner = NPUModelRunner.__new__(NPUModelRunner)
+    with pytest.raises(AssertionError, match="num_tokens_padded=8, last_query_offset=9"):
+        runner._pad_adaptive_query_start_loc_for_fia(8, 1, 1, np.array([0, 9], dtype=np.int32))
