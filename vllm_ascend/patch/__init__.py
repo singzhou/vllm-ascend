@@ -1781,3 +1781,14 @@
 #       Merged upstream: https://github.com/vllm-project/vllm/pull/63165
 #    Future Plan:
 #       Remove once the supported vLLM version includes upstream PR #63165.
+
+# DSpark adaptive verification:
+#   platform/patch_use_v2_model_runner.py waives only the graph-cost-profile
+#   eager restriction when a supported DSpark AV manager is selected.
+#   worker/patch_v2/patch_adaptive_verification.py selects the DSpark manager
+#   using the factory's VllmConfig while preserving the A5 index_fill_ adaptor.
+#   worker/v2/model_runner.py composes ragged mixed-batch graph refusal with
+#   the existing Ascend PCP dispatcher and preserves its DP synchronization.
+#   Upstream ownership: vLLM's factory and GPU runner dispatch hook.
+#   Future plan: remove these hooks once upstream supports the Ascend ragged
+#   state-operator contract and eager cost initialization for hybrid GDN.
