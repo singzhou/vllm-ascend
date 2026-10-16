@@ -3,7 +3,7 @@
 
 from collections.abc import Callable, Hashable, Sequence
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import torch
@@ -67,7 +67,11 @@ class GraphUpdateTask:
 
     def bind(self, params: Params) -> "GraphUpdateTask":
         runtime_kwargs = {**self.kwargs, **params}
-        return replace(self, kwargs=runtime_kwargs)
+        # Keep each resolution independent without dataclasses.replace's
+        # per-field reflection on every attention task and every replay.
+        return GraphUpdateTask(
+            self.operation, runtime_kwargs, self.provider, self.provider_index, self.handle, self.event
+        )
 
     def apply(self, update_stream) -> None:
         torch.npu.graph_task_update_begin(update_stream, self.handle)
@@ -157,21 +161,37 @@ class UpdatableGraph(torch.npu.NPUGraph):
         self,
         update_stream,
         resolved_tasks: tuple[GraphUpdateTask, ...],
+        replay_stream=None,
     ) -> None:
         logger.debug_once("Updating host-side attention metadata with UpdatableGraph.")
-        with torch.npu.stream(update_stream):
-            # This is specially designed for PA.
-            ws_buffer: dict[Hashable, Any] = {}
-            for task in resolved_tasks:
-                if task.operation == torch_npu._npu_paged_attention:
-                    ws_key = _get_ws_key(task.kwargs)
-                    if ws_buffer.get(ws_key) is None:
-                        ws_kwargs = task.kwargs.copy()
-                        ws_kwargs.pop("workspace")
-                        workspace = torch_npu._npu_paged_attention_get_workspace(**ws_kwargs)
-                        ws_buffer[ws_key] = workspace
-                    task.kwargs["workspace"] = ws_buffer[ws_key]
-                task.apply(update_stream)
+        if replay_stream is None or replay_stream.device != update_stream.device:
+            with torch.npu.stream(update_stream):
+                self._update_tasks(update_stream, resolved_tasks)
+            return
+        # The target replay already queried this thread's current stream for
+        # its input event. Reuse it instead of repeating device discovery and
+        # constructing another Stream inside StreamContext. Preserve the
+        # context manager's restoration semantics, including on exceptions.
+        torch.npu.set_stream(update_stream)
+        try:
+            self._update_tasks(update_stream, resolved_tasks)
+        finally:
+            torch.npu.set_stream(replay_stream)
+
+    def _update_tasks(self, update_stream, resolved_tasks: tuple[GraphUpdateTask, ...]) -> None:
+        # This is specially designed for PA. Workspaces are shared only within
+        # one update, since runtime tensor shapes and addresses may change.
+        ws_buffer: dict[Hashable, Any] = {}
+        for task in resolved_tasks:
+            if task.operation == torch_npu._npu_paged_attention:
+                ws_key = _get_ws_key(task.kwargs)
+                if ws_buffer.get(ws_key) is None:
+                    ws_kwargs = task.kwargs.copy()
+                    ws_kwargs.pop("workspace")
+                    workspace = torch_npu._npu_paged_attention_get_workspace(**ws_kwargs)
+                    ws_buffer[ws_key] = workspace
+                task.kwargs["workspace"] = ws_buffer[ws_key]
+            task.apply(update_stream)
 
 
 def register_task(
