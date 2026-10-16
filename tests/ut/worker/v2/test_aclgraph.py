@@ -8,8 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 from vllm.config.compilation import CUDAGraphMode
+from vllm.v1.worker.gpu.cudagraph_utils import ModelCudaGraphManager
 from vllm.v1.worker.gpu.spec_decode.autoregressive.cudagraph_utils import SpeculatorCudaGraphManager
 
+from vllm_ascend.worker.v2.aclgraph_utils import ModelAclGraphManager
 from vllm_ascend.worker.v2.spec_decode.autoregressive.aclgraph import (
     AutoRegressiveAclGraphManager,
 )
@@ -348,3 +350,42 @@ def test_updatable_graph_replay_reuses_shared_source(use_dcp, architecture, is_p
     manager.update_stream.wait_stream.assert_called_once_with(current_stream)
     parent_replay.assert_called_once_with(desc)
     graph.update.assert_called_once_with(manager.update_stream, resolved_tasks)
+
+
+def test_target_replay_reuses_input_event_and_preserves_submission_order():
+    """Keep input->update and replay->external-task ordering across iterations."""
+    manager = ModelAclGraphManager.__new__(ModelAclGraphManager)
+    manager.device = torch.device("cpu")
+    calls = MagicMock()
+    manager.update_stream = calls.update_stream
+    manager._update_inputs_ready = calls.input_event
+    graph = calls.graph
+    desc = object()
+    manager.graphs = {desc: graph}
+    source_stream = object()
+    with (
+        patch("vllm_ascend.worker.v2.aclgraph_utils.UpdatableGraph", MagicMock),
+        patch("vllm_ascend.worker.v2.aclgraph_utils.torch.npu.current_stream", return_value=source_stream) as current,
+        patch.object(ModelCudaGraphManager, "run_fullgraph", side_effect=calls.replay),
+    ):
+        for _ in range(2):
+            manager._updatable_graph_replay(desc, {})
+    current.assert_called_with(manager.device)
+    names = [c[0] for c in calls.mock_calls]
+    assert (
+        names
+        == [
+            "graph.resolve_tasks",
+            "input_event.record",
+            "update_stream.wait_event",
+            "replay",
+            "graph.update",
+        ]
+        * 2
+    )
+    manager._update_inputs_ready.record.assert_called_with(source_stream)
+    manager.update_stream.wait_event.assert_called_with(manager._update_inputs_ready)
+    manager.update_stream.wait_stream.assert_not_called()
+    graph.update.assert_called_with(
+        manager.update_stream, graph.resolve_tasks.return_value, replay_stream=source_stream
+    )

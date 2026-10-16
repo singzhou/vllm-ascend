@@ -163,6 +163,10 @@ class ModelAclGraphManager(ModelCudaGraphManager):
         self.breakable_cg_runner: BreakableACLGraphWrapper | None = None
         self.model_runner = model_runner
         self.update_stream = self.model_runner.update_stream
+        # wait_stream() allocates and destroys a temporary event every replay.
+        # A wait observes the most recent record at submission, so this event
+        # can be reused while retaining the input-preparation dependency.
+        self._update_inputs_ready = torch.npu.Event()
         self.capture_sizes = collect_sorted_captured_token_sizes(self._capture_descs)
         if super().needs_capture():
             set_graph_params(self.capture_sizes)
@@ -248,9 +252,11 @@ class ModelAclGraphManager(ModelCudaGraphManager):
         graph = self.graphs[desc]
         assert isinstance(graph, UpdatableGraph)
         resolved_tasks = graph.resolve_tasks(ContextSource(attn_metadata))
-        self.update_stream.wait_stream(torch.npu.current_stream())
+        replay_stream = torch.npu.current_stream(self.device)
+        self._update_inputs_ready.record(replay_stream)
+        self.update_stream.wait_event(self._update_inputs_ready)
         ret = super().run_fullgraph(desc)
-        graph.update(self.update_stream, resolved_tasks)
+        graph.update(self.update_stream, resolved_tasks, replay_stream=replay_stream)
         return ret
 
     def capture(
