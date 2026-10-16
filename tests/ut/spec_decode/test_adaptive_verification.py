@@ -44,7 +44,8 @@ def load(monkeypatch, name, relative):
 @pytest.fixture
 def av_logger_class(monkeypatch):
     module = types.ModuleType("vllm.logger")
-    module.logger = logging.getLogger("vllm")
+    # Keep CPU log capture independent of vLLM's non-propagating logger.
+    module.logger = logging.getLogger(__name__)
     monkeypatch.setitem(sys.modules, "vllm.logger", module)
     return load(monkeypatch, f"{PKG}.av_log", "vllm_ascend/worker/v2/spec_decode/dspark/av_log.py").AVLogger
 
@@ -868,6 +869,7 @@ def test_shared_no_spec_plan_resets_every_groups_captured_state():
             spec_actual_seq_lengths=torch.ones(5, dtype=torch.int32),
             _get_gdn_local_metadata=lambda m, *args: m,
             _get_shared_batch_plan=lambda *args: plan,
+            _try_fused_spec_metadata=lambda *args: None,
             _derive_group_state_indices=lambda *args: (None, torch.tensor([1]), torch.tensor([1])),
             _pad_decode_metadata=lambda *args: None,
             _attach_non_spec_prefill_metadata=lambda *args: None,
