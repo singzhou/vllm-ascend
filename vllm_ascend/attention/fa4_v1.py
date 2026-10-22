@@ -207,19 +207,16 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
         if cache_key not in cache:
             cu_seqlens_q, cache_seqlens = _build_fa4_seq_tensors(num_tokens, attn_metadata.seq_lens)
             scheduler_metadata = fa4.get_scheduler_metadata(
-                batch_size=num_reqs,
                 max_seqlen_q=num_tokens // num_reqs,
                 max_seqlen_k=max_seqlen_k,
-                num_heads_q=self.num_heads,
-                num_heads_kv=self.num_kv_heads,
+                nheads=self.num_heads,
+                nheads_kv=self.num_kv_heads,
                 headdim=self.head_size,
-                cache_seqlens=cache_seqlens,
-                qkv_dtype=query.dtype,
+                seqused_k=cache_seqlens,
                 cu_seqlens_q=cu_seqlens_q,
-                page_size=block_size,
                 causal=False,
-                window_size=(-1, -1),
-                softmax_scale=self.scale,
+                window_size_left=-1,
+                window_size_right=-1,
                 num_splits=0,
             )
             cache[cache_key] = cu_seqlens_q, cache_seqlens, scheduler_metadata
