@@ -61,10 +61,22 @@ def test_paged_forward_and_metadata_sharing(head_size):
         assert args["max_seqlen_k"] == 64  # table capacity, NOT max(seq_lens)
         assert args["max_seqlen_q"] == 4
         assert args["headdim"] == head_size
-        assert args["softmax_scale"] == impl.scale
-        assert args["qkv_dtype"] == query.dtype
-        assert args["cache_seqlens"].dtype == torch.int32
-        assert args["cache_seqlens"].tolist() == [19, 1]
+        assert args["nheads"] == 4
+        assert args["nheads_kv"] == 2
+        assert args["window_size_left"] == args["window_size_right"] == -1
+        legacy_keys = {
+            "batch_size",
+            "num_heads_q",
+            "num_heads_kv",
+            "cache_seqlens",
+            "qkv_dtype",
+            "page_size",
+            "softmax_scale",
+            "window_size",
+        }
+        assert not (legacy_keys & args.keys())
+        assert args["seqused_k"].dtype == torch.int32
+        assert args["seqused_k"].tolist() == [19, 1]
         assert args["cu_seqlens_q"].tolist() == [0, 4, 8]
         call = fa4.flash_attn_varlen_func.call_args
         assert call.args[0].is_contiguous()
@@ -73,7 +85,7 @@ def test_paged_forward_and_metadata_sharing(head_size):
         assert call.kwargs["page_table"].shape == (2, 4)
         assert call.kwargs["page_table"].is_contiguous()
         assert call.kwargs["scheduler_metadata"] is fa4.get_scheduler_metadata.return_value
-        assert call.kwargs["seqused_k"] is args["cache_seqlens"]
+        assert call.kwargs["seqused_k"] is args["seqused_k"]
         assert torch.all(output[:8] == 1)
         assert torch.all(output[8:] == -7)
         # Different scale and table capacity must never reuse old tiling.
@@ -87,7 +99,7 @@ def test_paged_forward_and_metadata_sharing(head_size):
         metadata.seq_lens[0] = 7
         with patch.object(fa4_module, "get_forward_context", return_value=context):
             impl.forward_fused_infer_attention(query, None, None, metadata, output)
-        assert fa4.get_scheduler_metadata.call_args.kwargs["cache_seqlens"].tolist() == [7, 1]
+        assert fa4.get_scheduler_metadata.call_args.kwargs["seqused_k"].tolist() == [7, 1]
 
 
 @pytest.mark.parametrize("num_tokens,lens", [(0, []), (0, [1]), (7, [2, 3])])
