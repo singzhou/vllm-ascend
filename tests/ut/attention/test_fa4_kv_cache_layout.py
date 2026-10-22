@@ -153,7 +153,8 @@ def test_forward_passes_virtual_pages_to_fa4(cache_functions):
     assert args.args[1].data_ptr() == original_key.data_ptr()
     torch.testing.assert_close(args.kwargs["page_table"], table * 2)
     assert args.kwargs["max_seqlen_k"] == 256
-    assert fa4.get_scheduler_metadata.call_args.kwargs["page_size"] == 128
+    assert fa4.get_scheduler_metadata.call_args.kwargs["max_seqlen_k"] == 256
+    assert "page_size" not in fa4.get_scheduler_metadata.call_args.kwargs
     assert impl.key_cache is original_key  # Writer keeps the original layout.
     assert torch.all(output == 1)
 
