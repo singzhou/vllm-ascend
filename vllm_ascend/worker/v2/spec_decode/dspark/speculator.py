@@ -15,7 +15,8 @@
 # limitations under the License.
 # This file is a part of the vllm-ascend project.
 #
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any, cast
 
 import numpy as np
@@ -23,8 +24,10 @@ import torch
 from vllm.config import VllmConfig, get_layers_from_vllm_config, set_current_vllm_config
 from vllm.config.compilation import CUDAGraphMode
 from vllm.distributed import get_dcp_group
+from vllm.logger import logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backend import AttentionBackend
+from vllm.v1.kv_cache_interface import AttentionSpec
 from vllm.v1.worker.gpu.cudagraph_utils import BatchExecutionDescriptor
 from vllm.v1.worker.gpu.input_batch import InputBatch
 from vllm.v1.worker.gpu.spec_decode.dflash import speculator as dflash_speculator
@@ -49,6 +52,10 @@ from vllm_ascend.worker.v2.attn_utils import (
 )
 from vllm_ascend.worker.v2.pcp_manager import AscendPCPManager
 from vllm_ascend.worker.v2.spec_decode.dflash.speculator import prepare_dflash_inputs_factory
+from vllm_ascend.worker.v2.spec_decode.dspark.context_window import (
+    DraftContextWindow,
+    read_context_window_config,
+)
 from vllm_ascend.worker.v2.spec_decode.lmhead_tp_utils import LmheadTPDraftSamplingMixin
 from vllm_ascend.worker.v2.spec_decode.pcp_utils import (
     disable_profiling_chunk_for_draft,
@@ -73,6 +80,9 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         self.attn_architecture: str | None = None
         self._draft_mla_uses_device_lengths = False
         self._init_dcp()
+        self._context_window_config = read_context_window_config(self.draft_model_config.hf_config)
+        self._context_window: DraftContextWindow | None = None
+        self._context_window_depth = 0
 
     def _init_dcp(self) -> None:
         self.use_dcp = self.attn_vllm_config.parallel_config.decode_context_parallel_size > 1
@@ -269,6 +279,83 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
             dflash_speculator.prepare_dflash_inputs = prepare_dflash_inputs_factory(
                 self.vllm_config.cache_config.block_size
             )
+            self._init_context_window()
+
+    def _init_context_window(self) -> None:
+        """Build the windowed draft block tables, if the draft asks for them."""
+        config = self._context_window_config
+        if config is None:
+            return
+        if self.use_dcp or self.block_tables.cp_size > 1:
+            raise ValueError(
+                "DSpark context windowing does not support context parallelism: the window start "
+                "is an absolute position, while DCP/PCP block tables are rank-local."
+            )
+        # Only paged KV groups have a window: a recurrent group's "block table"
+        # addresses state slots, not context tokens.
+        group_ids = [
+            gid
+            for gid in self.draft_kv_cache_group_ids
+            if isinstance(self.kv_cache_config.kv_cache_groups[gid].kv_cache_spec, AttentionSpec)
+        ]
+        if not group_ids:
+            raise ValueError("DSpark context windowing found no paged draft KV cache group to window.")
+        if len(group_ids) != len(self.draft_kv_cache_group_ids):
+            skipped = sorted(set(self.draft_kv_cache_group_ids) - set(group_ids))
+            logger.warning(
+                "DSpark context windowing leaves the non-paged draft KV cache groups %s unwindowed.", skipped
+            )
+        self._context_window = DraftContextWindow(
+            config,
+            group_ids=group_ids,
+            kernel_block_sizes=self.block_tables.kernel_block_sizes,
+            full_block_tables=self.block_tables.input_block_tables,
+            block_length=self.num_query_per_req,
+            device=self.device,
+        )
+        logger.info(
+            "DSpark draft reads an aligned context window: context_window=%d, context_window_align=%d, "
+            "draft block length=%d.",
+            config.context_window,
+            config.context_window_align,
+            self.num_query_per_req,
+        )
+
+    @contextmanager
+    def draft_attn_input_scope(self) -> Iterator[None]:
+        """Swap in windowed block tables and KV lengths for a metadata build.
+
+        Everything attention reads has to come from the window: the device
+        ``seq_lens`` (FA4 and the FIA sink read it directly), the host list the
+        MLA path copies out of it, and the draft block tables. The slot
+        mappings are deliberately untouched -- the draft still writes its KV at
+        absolute positions.
+
+        The swapped-in tensors are resident buffers, so FULL graph capture and
+        replay both see stable addresses. Re-entrant: the capture/replay path
+        wraps a build that wraps itself.
+        """
+        window = self._context_window
+        if window is None or self._context_window_depth:
+            yield
+            return
+        # The batch maximum the builders size their tiling with cannot exceed
+        # the window either. It is recomputed from the batch on every propose.
+        max_seq_len = getattr(self, "draft_max_seq_len", None)
+        if max_seq_len is not None:
+            self.draft_max_seq_len = min(max_seq_len, window.max_windowed_seq_len)
+        self._context_window_depth += 1
+        try:
+            with window.swap_in(self.input_buffers, self.block_tables):
+                yield
+        finally:
+            self._context_window_depth -= 1
+
+    def _windowed_seq_lens_cpu_upper_bound(self, seq_lens_cpu_upper_bound: torch.Tensor) -> torch.Tensor:
+        window = self._context_window
+        if window is None:
+            return seq_lens_cpu_upper_bound
+        return window.windowed_seq_lens_cpu_upper_bound(seq_lens_cpu_upper_bound)
 
     def _prepare_draft_dcp_metadata_inputs(
         self, num_reqs: int, num_reqs_padded: int, step: int
@@ -301,6 +388,11 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
     def build_draft_attn_metadatas(self, num_reqs_padded, seq_lens_cpu_upper_bound):
         assert self.input_batch is not None
         num_tokens_padded = num_reqs_padded * self.num_query_per_req
+        with self.draft_attn_input_scope():
+            return self._build_draft_attn_metadatas(num_reqs_padded, num_tokens_padded, seq_lens_cpu_upper_bound)
+
+    def _build_draft_attn_metadatas(self, num_reqs_padded, num_tokens_padded, seq_lens_cpu_upper_bound):
+        assert self.input_batch is not None
         seq_lens_cpu, is_prefilling = self._prepare_draft_dcp_metadata_inputs(
             self.input_batch.num_reqs, num_reqs_padded, self.num_query_per_req
         )
@@ -344,6 +436,27 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         dcp_local_seq_lens: torch.Tensor | None = None,
     ) -> dict[str, Any] | None:
         """Build Ascend draft metadata through the upstream attention hook."""
+        with self.draft_attn_input_scope():
+            return self._build_windowed_attn_metadata(
+                num_reqs=num_reqs,
+                batch_desc=batch_desc,
+                query_start_loc_np=query_start_loc_np,
+                seq_lens_cpu_upper_bound=self._windowed_seq_lens_cpu_upper_bound(seq_lens_cpu_upper_bound),
+                step=step,
+                causal=causal,
+                dcp_local_seq_lens=dcp_local_seq_lens,
+            )
+
+    def _build_windowed_attn_metadata(
+        self,
+        num_reqs: int,
+        batch_desc: BatchExecutionDescriptor,
+        query_start_loc_np: np.ndarray,
+        seq_lens_cpu_upper_bound: torch.Tensor,
+        step: int,
+        causal: bool | Mapping[int, bool] = True,
+        dcp_local_seq_lens: torch.Tensor | None = None,
+    ) -> dict[str, Any] | None:
         if self.attn_architecture not in ("GQA", "MLA"):
             # Non-MLA/GQA (e.g. SFA) delegates straight to upstream without
             # Ascend CPU-side DCP preparation.
