@@ -59,6 +59,9 @@ public:
         T_ = tilingData->t;
         NK_ = tilingData->nk;
         realK_ = tilingData->dk;
+        stateStride0_ = tilingData->stateStride0;
+        stateStride1_ = tilingData->stateStride1;
+        stateStride2_ = tilingData->stateStride2;
         NV_ = tilingData->nv;
         realV_ = tilingData->dv;
         scale_ = tilingData->scale;
@@ -249,7 +252,8 @@ private:
     {
         LocalTensor<stateType> stateLocal = stateInQueue_.AllocTensor<stateType>();
         DataCopyExtParams stateInParams{static_cast<uint16_t>(curSingleV),
-                                        static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0, 0};
+                                        static_cast<uint32_t>(realK_ * sizeof(stateType)),
+                                        static_cast<uint32_t>((stateStride2_ - realK_) * sizeof(stateType)), 0, 0};
         DataCopyPadExtParams<stateType> padParams{true, 0, static_cast<uint8_t>(alignK_ - realK_), 0};
         DataCopyPad(stateLocal, initStateGm_[stateOffest], stateInParams, padParams);
         stateInQueue_.EnQue<stateType>(stateLocal);
@@ -410,8 +414,9 @@ private:
     __aicore__ inline void CopyOutState(uint64_t stateOffset, uint32_t curSingleV)
     {
         LocalTensor<stateType> stateOutLocal = stateOutQueue_.DeQue<stateType>();
-        DataCopyParams stateOutParams{static_cast<uint16_t>(curSingleV),
-                                      static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
+        DataCopyExtParams stateOutParams{static_cast<uint16_t>(curSingleV),
+                                         static_cast<uint32_t>(realK_ * sizeof(stateType)), 0,
+                                         static_cast<uint32_t>((stateStride2_ - realK_) * sizeof(stateType)), 0};
         DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         stateOutQueue_.FreeTensor(stateOutLocal);
     }
@@ -452,7 +457,7 @@ private:
         }
         uint64_t nextVOffset = 0;
         uint32_t nextSingleV = realV_ > vStep_ ? vStep_ : realV_;
-        uint64_t nextStateOffset = ((stateOffset * NV_ + head_i) * realV_) * realK_;
+        uint64_t nextStateOffset = stateOffset * stateStride0_ + head_i * stateStride1_;
         PrefetchState(nextStateOffset, nextSingleV);
         for (uint64_t v_i = 0; v_i < realV_; v_i += vStep_) {
             uint32_t curSingleV = v_i + vStep_ > realV_ ? realV_ - v_i : vStep_;
@@ -460,7 +465,7 @@ private:
             nextVOffset = v_i + vStep_;
             if (nextVOffset < realV_) {
                 nextSingleV = nextVOffset + vStep_ > realV_ ? realV_ - nextVOffset : vStep_;
-                nextStateOffset = ((stateOffset * NV_ + head_i) * realV_ + nextVOffset) * realK_;
+                nextStateOffset = stateOffset * stateStride0_ + head_i * stateStride1_ + nextVOffset * stateStride2_;
                 PrefetchState(nextStateOffset, nextSingleV);
             }
             uint64_t pendingAttnOffset = 0;
@@ -473,7 +478,8 @@ private:
                 uint64_t curVOffset = (seq_i - seq0) * alignV_ + v_i;
                 uint64_t attnOffset = (seq_i * NV_ + head_i) * realV_ + v_i;
                 uint64_t curStateOutOffset =
-                    ((ssmStateIndicesGm_.GetValue(seq_i) * NV_ + head_i) * realV_ + v_i) * realK_;
+                    static_cast<uint64_t>(ssmStateIndicesGm_.GetValue(seq_i)) * stateStride0_ +
+                    head_i * stateStride1_ + v_i * stateStride2_;
                 gama_ = hasGama_ ? gamaInUb.GetValue(gbOffset) : 1;
                 beta_ = betaInUb.GetValue(gbOffset);
                 Compute(curSingleV, curQKOffset, curVOffset);
@@ -526,6 +532,9 @@ private:
     GlobalTensor<inType> betaGm_;
     GlobalTensor<float> gamaGm_;
     GlobalTensor<float> gamaKGm_;
+    uint64_t stateStride0_;
+    uint64_t stateStride1_;
+    uint64_t stateStride2_;
     GlobalTensor<stateType> initStateGm_;
     GlobalTensor<int32_t> cuSeqlensGm_;
     GlobalTensor<int32_t> ssmStateIndicesGm_;
