@@ -59,14 +59,15 @@ def test_conv_varlen_matches_cpu_golden(lengths):
     torch.testing.assert_close(device_state.cpu().float(), torch.from_numpy(expected_state).float(), rtol=0, atol=0)
 
 
-def test_recurrent_multiround_ragged_state_matches_cpu_golden():
+@pytest.mark.parametrize("stride", [8, 16])
+def test_recurrent_multiround_ragged_state_matches_cpu_golden(stride):
     torch.manual_seed(17)
-    rows, stride, nk, nv, dim = 3, 8, 2, 4, 64
+    rows, nk, nv, dim = 3, 2, 4, 64
     indices = np.arange(1, rows * stride + 1, dtype=np.int32).reshape(rows, stride)
     state = torch.randn(rows * stride + 1, nv, dim, dim, dtype=torch.float32) * 0.1
     device_state = state.npu()
     # accepted is the previous round's output count, independent of this round's width.
-    rounds = [([8, 8, 8], [1, 1, 1]), ([3, 1, 4], [6, 8, 3]), ([1, 4, 0], [3, 1, 4])]
+    rounds = [([stride, stride, stride], [1, 1, 1]), ([3, 1, 4], [stride - 2, stride, 3]), ([1, 4, 0], [3, 1, 4])]
     for lengths, accepted in rounds:
         qsl = np.r_[0, np.cumsum(lengths)].astype(np.int32)
         tokens = int(qsl[-1])
