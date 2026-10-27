@@ -242,3 +242,6 @@ csrc/third_party/
 
 # Full-graph adaptive-verification logs and baseline cache.
 dspark_av_*/
+
+# Namespaced build input generated from the byte-preserved legacy GDN sources.
+/csrc/attention/legacy_recurrent_gated_delta_rule/

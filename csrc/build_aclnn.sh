@@ -127,6 +127,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "grouped_matmul_swiglu_quant_v2"
         "chunk_fwd_o_vllm"
         "kda_gate_cumsum_vllm"
+        "legacy_recurrent_gated_delta_rule"
         "dcut_recurrent_gated_delta_rule"
         "kda_layout_swap12"
         "sparse_attention_score"
@@ -183,6 +184,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "attn_res_fwd"
         "chunk_fwd_o_vllm"
         "kda_gate_cumsum_vllm"
+        "legacy_recurrent_gated_delta_rule"
         "dcut_recurrent_gated_delta_rule"
         "kda_layout_swap12"
         "sparse_attention_score"
@@ -227,6 +229,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend950 ]]; then
         "chunk_fwd_o_vllm"
         "kda_gate_cumsum_vllm"
         "dcut_causal_conv1d"
+        "legacy_recurrent_gated_delta_rule"
         "dcut_recurrent_gated_delta_rule"
         "kda_layout_swap12"
         "k2q_csr"
@@ -242,6 +245,8 @@ else
     log "no custom ACLNN ops configured for SOC_VERSION=${SOC_VERSION}; skip build_aclnn"
     exit 0
 fi
+
+python3 "${ROOT_DIR}/csrc/scripts/prepare_legacy_gdn.py" "${ROOT_DIR}/csrc"
 
 log_selected_ops
 
