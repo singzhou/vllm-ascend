@@ -351,6 +351,21 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         finally:
             self._context_window_depth -= 1
 
+    def draft_attn_capture_max_seq_len(self, max_model_len: int) -> int:
+        """Cap the KV length graph capture builds its draft metadata for.
+
+        Capture does not go through the runtime length preparation: it hands
+        the builders ``max_seq_len`` only, and the Ascend metadata build turns
+        that into the host KV lengths when no exact ones are supplied (the MLA
+        path then passes them to FIA as ``seq_lens_list``). Left at
+        ``max_model_len`` those lengths would far exceed the windowed block
+        tables capture now binds, so cap them at the widest window.
+        """
+        window = self._context_window
+        if window is None:
+            return max_model_len
+        return min(max_model_len, window.max_windowed_seq_len)
+
     def _windowed_seq_lens_cpu_upper_bound(self, seq_lens_cpu_upper_bound: torch.Tensor) -> torch.Tensor:
         window = self._context_window
         if window is None:

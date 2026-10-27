@@ -39,6 +39,10 @@ GOLDEN_WINDOW_STARTS = [
 
 @pytest.mark.parametrize("context_window, align, anchor, expected", GOLDEN_WINDOW_STARTS)
 def test_window_start_golden_table(context_window, align, anchor, expected):
+    # The formula is the contract with training and holds for any align. The
+    # runtime is narrower: DraftContextWindow rejects an align that is not a
+    # multiple of the kernel block size, so the align=1 rows below are the
+    # shared definition only, not a supported serving configuration.
     anchors = torch.tensor([anchor], dtype=torch.int32)
     starts = window_start(anchors, context_window, align)
     assert starts.tolist() == [expected]
@@ -130,6 +134,43 @@ class TestDraftContextWindowInit:
     def test_clone_never_exceeds_the_full_table(self):
         window, _ = make_window(context_window=4096, align=128, num_cols=4)
         assert window.block_table_clones[0].shape == (4, 4)
+        # A table too short for the window caps every length derived from it.
+        assert window.max_windowed_seq_len == 4 * 128
+
+    @pytest.mark.parametrize(
+        "context_window, align, kernel_block_size, block_length, num_cols",
+        [
+            (4096, 128, 128, 16, 128),
+            (256, 128, 128, 4, 16),
+            (4096, 256, 128, 8, 8),
+            (300, 128, 64, 5, 64),
+        ],
+    )
+    def test_no_length_can_outrun_the_clone(self, context_window, align, kernel_block_size, block_length, num_cols):
+        # The invariant every consumer leans on: the lengths handed to FIA/FA4
+        # (device, host upper bound, batch maximum, capture) stay inside the
+        # columns the clone actually holds.
+        window, _ = make_window(
+            context_window=context_window,
+            align=align,
+            kernel_block_size=kernel_block_size,
+            block_length=block_length,
+            num_cols=num_cols,
+        )
+        capacity = window.block_table_clones[0].shape[1] * kernel_block_size
+        assert window.max_windowed_seq_len <= capacity
+        assert window.max_windowed_context_len + block_length <= capacity
+
+    def test_every_reachable_window_fits_the_clone(self):
+        # Walk real sequence lengths rather than trusting the bound's algebra.
+        window, _ = make_window(context_window=256, align=128, kernel_block_size=128, block_length=4, num_cols=64)
+        capacity = window.block_table_clones[0].shape[1] * 128
+        seq_lens = torch.arange(0, 4000, 7, dtype=torch.int32)
+        for chunk in seq_lens.split(4):
+            padded = torch.zeros(4, dtype=torch.int32)
+            padded[: chunk.numel()] = chunk
+            window.apply(padded)
+            assert int(window.windowed_seq_lens.max()) <= window.max_windowed_seq_len <= capacity
 
     def test_only_the_draft_groups_are_replaced(self):
         window, full = make_window(num_groups=3, draft_group_ids=(1,))

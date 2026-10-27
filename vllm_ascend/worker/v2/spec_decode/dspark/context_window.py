@@ -37,9 +37,13 @@ re-based at ``start // kernel_block_size``.
 
 The one place where ``anchor`` is approximate is a request that has reached
 ``max_model_len``: the preparation kernel clamps ``seq_len`` there, so the
-anchor it implies is short by the clamped amount. The window then starts at
-most one ``align`` step too late, which is the same truncation the clamp
-already applies to the draft itself.
+anchor derived from it is *smaller* than the real one and the window can
+start up to one ``align`` step early. Such a request then reads a little more
+context than training did -- never unwritten or evicted KV, since everything
+below ``seq_len`` has been written -- and only in the last block before the
+model length. Recovering the exact anchor would mean carrying the unclamped
+position out of the preparation kernel; until then this is a known, bounded
+deviation from the training definition.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -139,10 +143,7 @@ class DraftContextWindow:
 
         # An aligned start sits at most one ``align`` step below ``anchor - W``,
         # so a windowed length never exceeds W + align + B.
-        self.max_windowed_seq_len = config.context_window + config.context_window_align + block_length
-        # What the *context* (pre-block) part of a windowed length can reach;
-        # the draft block's own B positions are added on top of it upstream.
-        self.max_windowed_context_len = config.context_window + config.context_window_align
+        widest_window = config.context_window + config.context_window_align + block_length
 
         max_num_reqs = full_block_tables[self.group_ids[0]].shape[0]
         self.windowed_seq_lens = torch.zeros(max_num_reqs, dtype=torch.int32, device=device)
@@ -151,17 +152,29 @@ class DraftContextWindow:
         self._full_block_tables = {gid: full_block_tables[gid] for gid in self.group_ids}
         self.block_table_clones: dict[int, torch.Tensor] = {}
         self._column_offsets: dict[int, torch.Tensor] = {}
+        clone_capacity = widest_window
         for gid in self.group_ids:
             full_block_table = self._full_block_tables[gid]
             kernel_block_size = self.kernel_block_sizes[gid]
             # One spare column so a window that starts mid-table still covers
-            # max_windowed_seq_len tokens.
-            num_cols = -(-self.max_windowed_seq_len // kernel_block_size) + 1
+            # the widest window in full.
+            num_cols = -(-widest_window // kernel_block_size) + 1
+            # A table that cannot even hold the window (a short max_model_len)
+            # caps the clone, and with it every length handed to the kernels.
             num_cols = min(num_cols, full_block_table.shape[1])
+            clone_capacity = min(clone_capacity, num_cols * kernel_block_size)
             self.block_table_clones[gid] = torch.zeros(
                 (max_num_reqs, num_cols), dtype=full_block_table.dtype, device=device
             )
             self._column_offsets[gid] = torch.arange(num_cols, dtype=torch.int32, device=device).unsqueeze(0)
+
+        # Nothing downstream may claim more KV than the narrowest clone holds:
+        # this bounds the device lengths, the host upper bound, the batch
+        # maximum and the length graph capture is tiled for.
+        self.max_windowed_seq_len = min(widest_window, clone_capacity)
+        # What the *context* (pre-block) part of a windowed length can reach;
+        # the draft block's own B positions are added on top of it upstream.
+        self.max_windowed_context_len = max(self.max_windowed_seq_len - block_length, 0)
 
         # The draft groups' tables are replaced; every other group keeps its own.
         self.windowed_input_block_tables = [

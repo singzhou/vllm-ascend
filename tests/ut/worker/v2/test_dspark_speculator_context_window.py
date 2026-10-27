@@ -85,6 +85,11 @@ class TestWithoutTheConfig:
         bound = torch.tensor([5000, 10], dtype=torch.int32)
         assert speculator._windowed_seq_lens_cpu_upper_bound(bound) is bound
 
+    def test_capture_keeps_the_full_model_length(self):
+        speculator = make_speculator()
+        speculator._init_context_window()
+        assert speculator.draft_attn_capture_max_seq_len(8192) == 8192
+
 
 class TestWithTheConfig:
     def test_init_builds_the_window(self):
@@ -147,6 +152,19 @@ class TestWithTheConfig:
             with speculator.draft_attn_input_scope():
                 torch.testing.assert_close(speculator.input_buffers.seq_lens, windowed)
             torch.testing.assert_close(speculator.input_buffers.seq_lens, windowed)
+
+    def test_capture_is_tiled_for_the_window_not_the_model_length(self):
+        # Capture builds its host KV lengths from max_seq_len alone; left at
+        # max_model_len they would overrun the windowed block tables that the
+        # same capture binds.
+        speculator = make_speculator(DraftContextWindowConfig(256, 128))
+        speculator._init_context_window()
+        window = speculator._context_window
+        capped = speculator.draft_attn_capture_max_seq_len(100000)
+        assert capped == window.max_windowed_seq_len
+        assert capped <= window.block_table_clones[0].shape[1] * KERNEL_BLOCK_SIZE
+        # A model shorter than the window still wins.
+        assert speculator.draft_attn_capture_max_seq_len(64) == 64
 
     def test_build_attn_metadata_runs_inside_the_scope_with_a_capped_bound(self):
         speculator = make_speculator(DraftContextWindowConfig(256, 128))
