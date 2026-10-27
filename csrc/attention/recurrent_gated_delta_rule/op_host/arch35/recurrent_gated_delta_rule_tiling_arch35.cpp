@@ -64,6 +64,9 @@ protected:
         OP_CHECK_IF(AnalyzeShapesArch35() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid shapes."),
                     return ge::GRAPH_FAILED);
 
+        OP_CHECK_IF(GetStateStrides() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid state strides."),
+                    return ge::GRAPH_FAILED);
+
         OP_CHECK_IF(GetScale() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid GetScale."),
                     return ge::GRAPH_FAILED);
 
