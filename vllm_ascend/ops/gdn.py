@@ -45,6 +45,7 @@ from vllm_ascend.device.device_op import DeviceOperator
 from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_hardware_profile
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNFusedAttentionBackend
+from vllm_ascend.ops.gdn_recurrent import legacy_recurrent_gated_delta_rule, select_gdn_recurrent_backend
 from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule
 from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
@@ -348,6 +349,7 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
     def get_state_shape(
         self,
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+        select_gdn_recurrent_backend(self.num_spec, False)
         return MambaStateShapeCalculator.gated_delta_net_state_shape(
             self.tp_size,
             self.num_k_heads,
@@ -490,6 +492,10 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
         b = b[:num_actual_tokens]
         a = a[:num_actual_tokens]
 
+        recurrent_backend = select_gdn_recurrent_backend(
+            self.num_spec, getattr(attn_metadata, "use_dcut_varlen", False)
+        )
+
         # 1. Convolution sequence transformation
         conv_weights_T = _get_packed_conv_weights(self)
         if spec_sequence_masks is not None:
@@ -514,7 +520,7 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             spec_causal_conv1d_meta = attn_metadata.spec_decode_metadata.spec_causal_conv1d
             spec_query_start_loc_device = spec_causal_conv1d_meta.query_start_loc
             output_spec = torch.empty_like(mixed_qkv_spec)
-            if getattr(attn_metadata, "use_dcut_varlen", False):
+            if recurrent_backend == "dcut":
                 torch.ops._C_ascend.npu_dcut_causal_conv1d(
                     output_spec,
                     mixed_qkv_spec,
@@ -719,11 +725,9 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             actual_seq_lengths = attn_metadata.spec_decode_metadata.actual_seq_lengths
             query_spec = l2norm_fwd(query_spec)
             key_spec = l2norm_fwd(key_spec)
-            # Dispatches to the vllm-ascend AscendC custom operator
-            # (csrc/recurrent_gated_delta_rule), NOT the built-in CANN operator.
-            # The custom op extends dtype support (e.g. float32 state) and is
-            # loaded at runtime via ASCEND_CUSTOM_OPP_PATH.
-            if getattr(attn_metadata, "use_dcut_varlen", False):
+            # Dynamic verification always uses DCUT. Fixed verification selects
+            # FLA (up to 8 tokens) or the restored legacy kernel (up to 16).
+            if recurrent_backend == "dcut":
                 core_attn_out_spec = torch.ops._C_ascend.npu_dcut_recurrent_gated_delta_rule(
                     query=query_spec.squeeze(0),
                     key=key_spec.squeeze(0),
@@ -737,7 +741,10 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                     num_accepted_tokens=spec_causal_conv1d_meta.num_accepted_tokens.to(torch.int32),
                 ).unsqueeze(0)
             else:
-                core_attn_out_spec = recurrent_gated_delta_rule(
+                recurrent_op = (
+                    legacy_recurrent_gated_delta_rule if recurrent_backend == "legacy" else recurrent_gated_delta_rule
+                )
+                core_attn_out_spec = recurrent_op(
                     query_spec.squeeze(0),
                     key_spec.squeeze(0),
                     value_spec.squeeze(0),
