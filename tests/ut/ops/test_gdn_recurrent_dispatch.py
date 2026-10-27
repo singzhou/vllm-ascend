@@ -24,8 +24,10 @@ def test_unsupported_length_rejected(num_spec, use_dcut):
         select_gdn_recurrent_backend(num_spec, use_dcut)
 
 
-def test_contiguous_legacy_state_is_updated_in_place():
-    state = torch.zeros(20, 1, 2, 2)
+@pytest.mark.parametrize("strided", [False, True])
+def test_legacy_passes_original_state_and_indices_without_copies(strided):
+    backing = torch.zeros(20, 8)
+    state = backing[:, 1:5].view(20, 1, 2, 2) if strided else torch.zeros(20, 1, 2, 2)
     qkv = torch.zeros(9, 1, 2)
     indices = torch.arange(1, 10, dtype=torch.int32)
     lengths = torch.tensor([0, 9], dtype=torch.int32)

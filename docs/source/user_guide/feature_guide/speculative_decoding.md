@@ -42,11 +42,12 @@ Configurations above 15 draft tokens fail early for GDN. Ordinary single-token
 decode continues to use FLA. Unsupported adaptive-verification configurations
 raise an error instead of falling back to a fixed-length kernel.
 
-Rebuild the vLLM Ascend custom operators after updating. The historical operator
-sources are preserved unchanged; the build generates a separate
+Rebuild the vLLM Ascend custom operators after updating. The build generates a separate
 `LegacyRecurrentGatedDeltaRule` registration to avoid shadowing FLA's CANN kernel.
-For padded state-cache pages, the legacy engine adapter gathers active rows and
-scatters updated rows back on device, including during graph replay.
+The legacy kernel reads and writes state-cache views directly using their physical
+strides and storage offset, including during graph replay. It supports padded
+cache slots, heads and rows with a contiguous innermost K dimension; verification
+does not allocate a compact state scratch or gather/scatter the cache.
 
 ### Shared options
 
