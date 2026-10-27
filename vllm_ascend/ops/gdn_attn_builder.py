@@ -408,12 +408,15 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
 
         # Gate ragged-decode GDN metadata on the adapted AV manager.
         self.adaptive_verification_enabled = adaptive_verification_enabled(vllm_config)
+        spec = vllm_config.speculative_config
+        if spec is not None and getattr(spec, "enable_adaptive_verification", False):
+            if not self.adaptive_verification_enabled:
+                raise ValueError("Dynamic GDN verification requires the Ascend DCUT adaptive-verification path")
 
         # Adaptive verification gives each request its own verification length,
         # so its batches are ragged. That is a different contract from the
         # untrimmed fixed-K one and it is what fixes the GDN request axis below,
         # independently of whether this run is eager or captured.
-        spec = vllm_config.speculative_config
         self.ragged_spec_decode = bool(spec is not None and getattr(spec, "enable_adaptive_verification", False))
         # Opt-in until the rest of the fixed-axis contract lands. Pinning the
         # GDN axis alone leaves the attention request axis and the persistent
