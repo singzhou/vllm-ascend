@@ -745,6 +745,25 @@ at::Tensor npu_recurrent_gated_delta_rule_310_meta(
     return output;
 }
 
+at::Tensor npu_recurrent_gated_delta_rule_meta(
+    const at::Tensor& query,
+    const at::Tensor& key,
+    const at::Tensor& value,
+    at::Tensor& state,
+    const c10::optional<at::Tensor>& beta,
+    const c10::optional<double> scale,
+    const c10::optional<at::Tensor>& actual_seq_lengths,
+    const c10::optional<at::Tensor>& ssm_state_indices,
+    const c10::optional<at::Tensor>& num_accepted_tokens,
+    const c10::optional<at::Tensor>& g,
+    const c10::optional<at::Tensor>& gk)
+{
+
+    auto options = value.options().dtype(at::ScalarType::BFloat16);
+    at::Tensor output = at::empty_symint(value.sym_sizes(), options);
+    return output;
+}
+
 at::Tensor npu_dcut_recurrent_gated_delta_rule_meta(
     const at::Tensor& query,
     const at::Tensor& key,
@@ -1856,6 +1875,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     // fused_quant_lightning_indexer_manage meta implementation
     ops.impl("npu_fused_quant_lightning_indexer_manage", &vllm_ascend::meta::npu_fused_quant_lightning_indexer_manage_meta);
     // D-Cut recurrent_gated_delta_rule meta implementation
+    ops.impl("npu_recurrent_gated_delta_rule", &vllm_ascend::meta::npu_recurrent_gated_delta_rule_meta);
     ops.impl("npu_dcut_recurrent_gated_delta_rule",
              &vllm_ascend::meta::npu_dcut_recurrent_gated_delta_rule_meta);
     // Launch host print from device
