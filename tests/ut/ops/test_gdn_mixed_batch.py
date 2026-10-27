@@ -281,8 +281,10 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state) -> None:
 
 
 @pytest.mark.parametrize("speculative", [False, True])
-def test_decode_forward_does_not_reconcat_qkv(speculative):
+@pytest.mark.parametrize("num_spec,use_dcut", [(3, False), (7, False), (8, False), (15, False), (3, True), (15, True)])
+def test_decode_forward_does_not_reconcat_qkv(speculative, num_spec, use_dcut):
     layer = _make_layer()
+    layer.num_spec = num_spec
     packed = torch.arange(24, dtype=torch.float32).reshape(4, 6)
     metadata = _make_mixed_metadata()
     metadata.num_prefills = 0
@@ -303,6 +305,7 @@ def test_decode_forward_does_not_reconcat_qkv(speculative):
         ),
         actual_seq_lengths=torch.tensor([0, 2, 2], dtype=torch.int32),
     )
+    metadata.use_dcut_varlen = use_dcut
     output = torch.empty(4, 1, 2)
     context = ForwardContext(
         no_compile_layers={layer.prefix: layer},
@@ -318,10 +321,16 @@ def test_decode_forward_does_not_reconcat_qkv(speculative):
             torch.testing.assert_close(kwargs["num_accepted_tokens"], torch.tensor([1, 2], dtype=torch.int32))
         return v.clone()
 
+    def dcut_recurrent(**kwargs):
+        return recurrent(kwargs.pop("query"), kwargs.pop("key"), kwargs.pop("value"), kwargs.pop("state"), **kwargs)
+
+    def dcut_conv(out, x, *args, **kwargs):
+        out.copy_(x)
+
     # Reject the inherited concat helper for all real decode inputs.
     original = layer.rearrange_mixed_qkv.side_effect
-    layer.rearrange_mixed_qkv.side_effect = (
-        lambda x: original(x) if x is None else pytest.fail("decode used inherited QKV concat")
+    layer.rearrange_mixed_qkv.side_effect = lambda x: (
+        original(x) if x is None else pytest.fail("decode used inherited QKV concat")
     )
     with (
         override_forward_context(context),
@@ -333,12 +342,21 @@ def test_decode_forward_does_not_reconcat_qkv(speculative):
         ),
         patch("vllm_ascend.ops.gdn.l2norm_fwd", side_effect=lambda x: x),
         patch("vllm_ascend.ops.gdn.causal_conv1d_update", side_effect=lambda x, *a, **k: x.clone()) as conv,
-        patch("vllm_ascend.ops.gdn.recurrent_gated_delta_rule", side_effect=recurrent),
+        patch("vllm_ascend.ops.gdn.recurrent_gated_delta_rule", side_effect=recurrent) as fla,
+        patch("vllm_ascend.ops.gdn.legacy_recurrent_gated_delta_rule", side_effect=recurrent) as legacy,
+        patch(
+            "torch.ops._C_ascend.npu_dcut_recurrent_gated_delta_rule", side_effect=dcut_recurrent, create=True
+        ) as dcut,
+        patch("torch.ops._C_ascend.npu_dcut_causal_conv1d", side_effect=dcut_conv, create=True) as dcut_conv_op,
         patch("vllm_ascend.ops.gdn.maybe_save_kv_layer_to_connector"),
     ):
         AscendGatedDeltaNetAttention._forward_core(layer, packed, torch.zeros(4, 1), torch.zeros(4, 1), output)
     torch.testing.assert_close(output, packed[:, 4:].reshape(4, 1, 2))
+    expected = dcut if speculative and use_dcut else legacy if speculative and num_spec >= 8 else fla
+    for op in (fla, legacy, dcut):
+        assert op.call_count == int(op is expected)
     if speculative:
+        conv = dcut_conv_op if use_dcut else conv
         torch.testing.assert_close(
             conv.call_args.kwargs["num_accepted_tokens"],
             torch.tensor([1, 2], dtype=torch.int32),

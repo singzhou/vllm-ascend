@@ -75,7 +75,8 @@ def test_dcut_conv_padded_state(graph_mode):
     torch.manual_seed(35)
     initial, dense, padded, backing = _state_pair((16, 7, 32), torch.bfloat16)
     x = torch.randn(5, 32, dtype=torch.bfloat16, device="npu")
-    weight = torch.randn(3, 32, dtype=torch.bfloat16, device="npu")
+    # Speculative num_accepted_tokens is supported only for convolution width 4.
+    weight = torch.randn(4, 32, dtype=torch.bfloat16, device="npu")
     query_start_loc = torch.tensor([0, 2, 2, 3], dtype=torch.int32, device="npu")
     indices = torch.tensor([[3, 4, 5, 6], [-1, -1, -1, -1], [11, 12, 13, 14]], dtype=torch.int32, device="npu")
     accepted = torch.tensor([3, 1, 2], dtype=torch.int32, device="npu")
