@@ -176,10 +176,15 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     auto out_ = l0op::Contiguous(out, uniqueExecutor.get());
 
+    // Preserve view strides explicitly: CANN tiling may omit input-stride metadata.
+    CHECK_RET(stateRef->GetViewShape().GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID);
+    const auto stateStrides = stateRef->GetViewStrides();
+
     // 调用l0接口
     auto outRet =
         l0op::RecurrentGatedDeltaRule(query_, key_, value_, beta_, stateRef, actualSeqLengths_, ssmStateIndices_, g, gk,
-                                      numAcceptedTokens, scaleValue, uniqueExecutor.get());
+                                      numAcceptedTokens, scaleValue, stateStrides[0], stateStrides[1],
+                                      stateStrides[2], stateStrides[3], uniqueExecutor.get());
     if (outRet == nullptr) {
         return ACLNN_ERR_INNER_NULLPTR;
     }

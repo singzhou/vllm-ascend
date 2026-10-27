@@ -42,7 +42,8 @@ public:
             .ParamType(REQUIRED)
             .DataType({ge::DT_BF16, ge::DT_FLOAT})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND});
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
+            .IgnoreContiguous();
         this->Input("actual_seq_lengths")
             .ParamType(REQUIRED)
             .DataType({ge::DT_INT32, ge::DT_INT32})
@@ -77,8 +78,13 @@ public:
             .ParamType(REQUIRED)
             .DataType({ge::DT_BF16, ge::DT_FLOAT})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND});
+            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
+            .IgnoreContiguous();
         this->Attr("scale_value").AttrType(OPTIONAL).Float(1.0);
+        this->Attr("state_stride0").AttrType(OPTIONAL).Int(-1);
+        this->Attr("state_stride1").AttrType(OPTIONAL).Int(-1);
+        this->Attr("state_stride2").AttrType(OPTIONAL).Int(-1);
+        this->Attr("state_stride3").AttrType(OPTIONAL).Int(1);
         
         OpAICoreConfig aicConfig;
         aicConfig.DynamicCompileStaticFlag(true)
