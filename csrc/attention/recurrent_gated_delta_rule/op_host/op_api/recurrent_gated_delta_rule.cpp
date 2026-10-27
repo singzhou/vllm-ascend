@@ -29,7 +29,8 @@ OP_TYPE_REGISTER(RecurrentGatedDeltaRule);
 const aclTensor *RecurrentGatedDeltaRule(const aclTensor *query, const aclTensor *key, const aclTensor *value,
                                          const aclTensor *beta, aclTensor *stateRef, const aclTensor *actualSeqLengths,
                                          const aclTensor *ssmStateIndices, const aclTensor *g, const aclTensor *gk,
-                                         const aclTensor *numAcceptedTokens, float scaleValue, aclOpExecutor *executor)
+                                         const aclTensor *numAcceptedTokens, float scaleValue, int64_t stateStride0, int64_t stateStride1,
+                                         int64_t stateStride2, int64_t stateStride3, aclOpExecutor *executor)
 {
     L0_DFX(RecurrentGatedDeltaRule, query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk,
            numAcceptedTokens, scaleValue);
@@ -46,13 +47,13 @@ const aclTensor *RecurrentGatedDeltaRule(const aclTensor *query, const aclTensor
     auto ret = INFER_SHAPE(
         RecurrentGatedDeltaRule,
         OP_INPUT(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens),
-        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue));
+        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, stateStride0, stateStride1, stateStride2, stateStride3));
     OP_CHECK_INFERSHAPE(ret != ACLNN_SUCCESS, return nullptr, "RecurrentGatedDeltaRule InferShape failed.");
 
     ret = ADD_TO_LAUNCHER_LIST_AICORE(
         RecurrentGatedDeltaRule,
         OP_INPUT(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens),
-        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue));
+        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, stateStride0, stateStride1, stateStride2, stateStride3));
     OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(ret != ACLNN_SUCCESS, return nullptr,
                                          "RecurrentGatedDeltaRule ADD_TO_LAUNCHER_LIST_AICORE failed.");
 
