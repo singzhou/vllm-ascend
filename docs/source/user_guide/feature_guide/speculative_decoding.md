@@ -26,6 +26,30 @@ The following speculative decoding methods are supported:
 
 ## Common Configuration
 
+### GDN verification kernels on Ascend 910
+
+GDN selects its recurrent verification kernel automatically from the configured
+maximum draft length (`num_speculative_tokens`). Verification includes one extra
+target token, so a configuration of 15 draft tokens requires 16 verification steps.
+
+| Verification mode | Draft tokens | Recurrent kernel |
+| ----------------- | ------------ | ---------------- |
+| Fixed length | 1–7 | External FLA |
+| Fixed length | 8–15 | Restored vLLM Ascend legacy operator |
+| Dynamic/adaptive verification | 1–15 | DCUT exclusively |
+
+Configurations above 15 draft tokens fail early for GDN. Ordinary single-token
+decode continues to use FLA. Unsupported adaptive-verification configurations
+raise an error instead of falling back to a fixed-length kernel.
+
+Rebuild the vLLM Ascend custom operators after updating. The historical operator
+sources are preserved unchanged; the build generates a separate
+`LegacyRecurrentGatedDeltaRule` registration to avoid shadowing FLA's CANN kernel.
+For padded state-cache pages, the legacy engine adapter gathers active rows and
+scatters updated rows back on device, including during graph replay.
+
+### Shared options
+
 All speculative decoding methods are configured through the `speculative_config` parameter when initializing the model or starting the server:
 
 - **`method`** (str, required): The speculative decoding method. Must be one of the supported method names listed in the table above.
