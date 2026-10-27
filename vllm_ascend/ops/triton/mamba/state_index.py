@@ -48,14 +48,19 @@ def _scatter_ssm_states_kernel(
     state_ptr,
     indices_ptr,
     source_ptr,
+    valid_rows_ptr,
     stride_state_batch: tl.int64,
     stride_indices,
     stride_source_batch: tl.int64,
     row_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
+    HAS_VALID_ROWS: tl.constexpr,
 ):
     block_idx = tl.program_id(0)
     batch_idx = tl.program_id(1)
+    if HAS_VALID_ROWS:
+        if not tl.load(valid_rows_ptr + batch_idx):
+            return
     offsets = block_idx * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < row_size
 
@@ -171,6 +176,8 @@ def scatter_ssm_states_(
     state: torch.Tensor,
     indices: torch.Tensor,
     source: torch.Tensor,
+    *,
+    valid_rows: torch.Tensor | None = None,
 ) -> None:
     """Write dense state rows into selected slots of a padded state cache.
 
@@ -178,8 +185,13 @@ def scatter_ssm_states_(
     contiguous and padding is represented by ``state.stride(0)``. ``indices``
     select physical rows and may be unsorted or non-contiguous. ``source``
     must have the logical state shape and contiguous inner dimensions.
+    Optional ``valid_rows`` skips inactive rows without reading their indices.
     """
     _validate_scatter_inputs(state, indices, source)
+    if valid_rows is not None:
+        _validate_gather_inputs(state, indices, valid_rows)
+        if not valid_rows.is_contiguous():
+            raise ValueError("valid_rows must be contiguous")
     if indices.numel() == 0:
         return
 
@@ -189,10 +201,12 @@ def scatter_ssm_states_(
         state,
         indices,
         source,
+        valid_rows,
         state.stride(0),
         indices.stride(0),
         source.stride(0),
         row_size=row_size,
         BLOCK_SIZE=STATE_IO_BLOCK_SIZE,
+        HAS_VALID_ROWS=valid_rows is not None,
         num_warps=8,
     )

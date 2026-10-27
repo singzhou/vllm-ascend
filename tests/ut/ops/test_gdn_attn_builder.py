@@ -1983,3 +1983,19 @@ def test_ragged_graph_pins_gdn_axis_even_without_the_bisect_flag():
     )
     assert builder.ragged_spec_decode is True
     assert metadata.spec_state_indices_tensor.shape[0] == 16
+
+
+def test_dynamic_verification_cannot_fall_back_to_fixed_kernels():
+    with (
+        patch(
+            "vllm_ascend.worker.v2.spec_decode.dspark.av_config.adaptive_verification_enabled",
+            return_value=False,
+        ),
+        pytest.raises(ValueError, match="Dynamic GDN verification requires"),
+    ):
+        _make_builder(
+            device=torch.device("cpu"),
+            num_heads=32,
+            num_speculative_tokens=7,
+            enable_adaptive_verification=True,
+        )
