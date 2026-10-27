@@ -83,6 +83,34 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
     tilingData_.vectorCoreNum = compileInfo_.aivNum;
 }
 
+// State is an in-place view: preserve its physical strides and storage offset.
+ge::graphStatus RecurrentGatedDeltaRuleTiling::GetStateStrides()
+{
+    // ACLNN carries the original aclTensor view strides as scalar attributes.
+    // GetInputStride() can be empty even for non-contiguous input views.
+    auto readStride = [this](size_t index, int64_t fallback) {
+        const auto *value = context_->GetAttrs()->GetAttrPointer<int64_t>(index);
+        return value == nullptr || *value == -1 ? fallback : *value;
+    };
+    const int64_t stride2 = readStride(3, tilingData_.dk);
+    const int64_t stride1 = readStride(2, static_cast<int64_t>(tilingData_.dv) * tilingData_.dk);
+    const int64_t stride0 = readStride(1, static_cast<int64_t>(tilingData_.nv) * tilingData_.dv * tilingData_.dk);
+    OP_CHECK_IF(readStride(4, 1) != 1 || stride2 < tilingData_.dk || stride1 <= 0 || stride0 <= 0,
+                OP_LOGE(inputParams_.opName, "State requires positive strides and contiguous K rows."),
+                return ge::GRAPH_FAILED);
+    const uint64_t elementBytes = context_->GetInputDesc(STATE_INDEX)->GetDataType() == ge::DT_FLOAT ? 4 : 2;
+    OP_CHECK_IF(stride2 - tilingData_.dk > UINT32_MAX / elementBytes,
+                OP_LOGE(inputParams_.opName, "State row padding exceeds DMA stride range."), return ge::GRAPH_FAILED);
+    const uint64_t headSpan = (static_cast<uint64_t>(tilingData_.dv) - 1) * stride2 + tilingData_.dk;
+    const uint64_t slotSpan = (static_cast<uint64_t>(tilingData_.nv) - 1) * stride1 + headSpan;
+    OP_CHECK_IF(stride1 < headSpan || stride0 < slotSpan,
+                OP_LOGE(inputParams_.opName, "State heads and cache slots must not overlap."), return ge::GRAPH_FAILED);
+    tilingData_.stateStride0 = stride0;
+    tilingData_.stateStride1 = stride1;
+    tilingData_.stateStride2 = stride2;
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetPlatformInfo()
 {
     return ge::GRAPH_SUCCESS;
@@ -97,6 +125,9 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetShapeAttrsInfo()
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(AnalyzeShapes() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid shapes."),
+                return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(GetStateStrides() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid state strides."),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetScale() != ge::GRAPH_SUCCESS, OP_LOGE(inputParams_.opName, "Invalid GetScale."),
