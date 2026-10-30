@@ -1,5 +1,30 @@
 # Issue 45: asynchronous long-prefill diagnostics
 
+## Candidate fix: compact DSV4 draft cache packing
+
+The branch also removes the separate trailing tuple reservation for `mtp`
+layers. Draft layers join their group's page-size buckets with distinct layer
+positions. Live block IDs are exclusive across groups, as in the existing
+target layout. Startup capacity checks and physical allocation now share the
+same bytes-per-block calculation. Full-input admission remains enabled.
+
+Restart the server after updating: physical KV offsets change. Re-test the
+original asynchronous 14336-token configuration and compare startup KV capacity,
+`KV_ALLOC_OK`/`KV_ALLOC_FAIL`, nonzero `SCHEDULE_END`, completion and output
+correctness. This is a candidate fix until validated on NPU hardware.
+
+The regression tests execute the production planner functions using CPU-only
+descriptor stand-ins. The old code admits a synthetic 13-block budget but
+materializes only 9 blocks; the new layout materializes all 13. Tests also check
+disjoint live byte ranges, null-block accounting, name-independent packing,
+bucket growth and unchanged target-only capacity:
+
+```bash
+python3 tests/ut/patch/platform/test_dsv4_tuple_capacity.py
+```
+
+## Diagnostic logging
+
 This temporary branch enables `ISSUE45` INFO logs automatically. No extra
 environment variable is required. Keep INFO logging enabled. The patch logs host
 state only: it does not read device tensors, synchronize the NPU, or change

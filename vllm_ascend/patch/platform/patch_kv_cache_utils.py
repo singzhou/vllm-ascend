@@ -512,7 +512,7 @@ def _ascend_get_packed_kv_cache_groups(
 
 def _get_deepseek_v4_cache_layout(
     kv_cache_groups: list[KVCacheGroupSpec],
-) -> tuple[list[int], list[dict[int, list[str]]], list[str], int, int]:
+) -> tuple[list[int], list[dict[int, list[str]]], int]:
     """Return the geometry shared by DSV4 planning and rank normalization.
 
     Precondition: kv_cache_groups[0] is the full-MLA group; its page sizes
@@ -529,28 +529,22 @@ def _get_deepseek_v4_cache_layout(
 
     # Pre-bucket each group's layers by page_size (registration order within
     # bucket). bucketed[g_idx][page_size] = [layer_name, ...].
-    mtp_layer_names = []
-    mtp_page_size = 0
     bucketed: list[dict[int, list[str]]] = []
     for group in kv_cache_groups:
         assert isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
         specs = group.kv_cache_spec.kv_cache_specs
         b: dict[int, list[str]] = defaultdict(list)
         for name in group.layer_names:
-            if "mtp" not in name:
-                b[specs[name].page_size_bytes].append(name)
-            else:
-                mtp_layer_names.append(name)
-                mtp_page_size = specs[name].page_size_bytes
+            b[specs[name].page_size_bytes].append(name)
         bucketed.append(b)
 
-    # num_layer_tuples = longest bucket list across all groups. For the
-    # full-MLA group this equals the count of layers in the largest
-    # per-page-size bucket (= get_num_layer_tuples()); for SWA sub-groups
-    # this equals the sub-group size (each has a single page_size).
-    num_layer_tuples = max(len(layers) for b in bucketed for layers in b.values()) + len(mtp_layer_names)
-
-    return page_sizes, bucketed, mtp_layer_names, mtp_page_size, num_layer_tuples
+    # Draft and target layers in the SAME group own distinct bucket positions.
+    # Different groups can overlay those positions because the global block
+    # pool never assigns a live block ID to two groups. Reserving trailing
+    # whole tuples for each "mtp" layer wastes all the tuple's other buckets
+    # and makes the physical pool smaller than the startup capacity estimate.
+    num_layer_tuples = max(len(layers) for buckets in bucketed for layers in buckets.values())
+    return page_sizes, bucketed, num_layer_tuples
 
 
 def _get_kv_cache_config_deepseek_v4_main(
@@ -560,13 +554,7 @@ def _get_kv_cache_config_deepseek_v4_main(
 ) -> tuple[int, list[KVCacheTensor]]:
     if tq_cache.uses_turboquant_groups(kv_cache_groups):
         return tq_cache.cache_config(vllm_config, kv_cache_groups, available_memory)
-    (
-        page_sizes,
-        bucketed,
-        mtp_layer_names,
-        mtp_page_size,
-        num_tuple_slots,
-    ) = _get_deepseek_v4_cache_layout(kv_cache_groups)
+    page_sizes, bucketed, num_tuple_slots = _get_deepseek_v4_cache_layout(kv_cache_groups)
 
     bytes_per_tuple = sum(page_sizes)
     num_blocks = available_memory // (bytes_per_tuple * num_tuple_slots)
@@ -601,21 +589,6 @@ def _get_kv_cache_config_deepseek_v4_main(
                     block_stride=page_size,
                 )
             )
-
-    # MTP layers receive trailing tuple slots. Unused page buckets remain
-    # padding so num_blocks and memory accounting retain the existing contract.
-    normal_tuple_slots = num_tuple_slots - len(mtp_layer_names)
-    for index, layer_name in enumerate(mtp_layer_names):
-        slot = normal_tuple_slots + index
-        tensors.append(
-            KVCacheTensor(
-                size=backing_size,
-                layers=[layer_name],
-                offset=slot * tuple_stride + page_offsets[mtp_page_size],
-                layer_stride=0,
-                block_stride=mtp_page_size,
-            )
-        )
 
     return num_blocks, tensors
 
@@ -654,7 +627,7 @@ def _ascend_pool_bytes_per_block(kv_cache_groups: list[KVCacheGroupSpec]) -> int
     if not _is_deepseek_v4_groups(kv_cache_groups):
         return _orig_pool_bytes_per_block(kv_cache_groups)
 
-    page_sizes, _, _, _, num_layer_tuples = _get_deepseek_v4_cache_layout(kv_cache_groups)
+    page_sizes, _, num_layer_tuples = _get_deepseek_v4_cache_layout(kv_cache_groups)
     return sum(page_sizes) * num_layer_tuples
 
 
@@ -662,7 +635,7 @@ def _ascend_max_memory_usage_bytes_from_groups(
     vllm_config: VllmConfig,
     kv_cache_groups: list[KVCacheGroupSpec],
 ) -> int:
-    """Keep the pre-#51718 DSV4 admission formula for its shared tuples."""
+    """Use the physical shared-tuple geometry for DSV4 capacity checks."""
     if tq_cache.uses_turboquant_groups(kv_cache_groups):
         return tq_cache.max_memory_usage(vllm_config, kv_cache_groups)
     if _get_glm5_next_cache_layout(kv_cache_groups) is not None:
@@ -671,19 +644,8 @@ def _ascend_max_memory_usage_bytes_from_groups(
         return _orig_max_memory_usage_bytes_from_groups(vllm_config, kv_cache_groups)
 
     assert all(isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs) for group in kv_cache_groups)
-    full_mla_spec = kv_cache_groups[0].kv_cache_spec
-    assert isinstance(full_mla_spec, UniformTypeKVCacheSpecs)
-    layer_tuple_bytes = sum(_page_sizes(full_mla_spec))
-    num_layer_tuples = max(
-        _get_max_layers_per_page_size(group.kv_cache_spec)
-        for group in kv_cache_groups
-        if isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
-    )
-    return sum(
-        num_layer_tuples * group.kv_cache_spec.max_memory_usage_pages(vllm_config) * layer_tuple_bytes
-        for group in kv_cache_groups
-        if isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
-    )
+    bytes_per_block = _ascend_pool_bytes_per_block(kv_cache_groups)
+    return bytes_per_block * sum(group.kv_cache_spec.max_memory_usage_pages(vllm_config) for group in kv_cache_groups)
 
 
 def _get_glm5_next_kv_cache_groups(
