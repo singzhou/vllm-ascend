@@ -74,6 +74,7 @@ from vllm_ascend.core.profiling_chunk_predictor import (
     _finish_profiling_chunk_timing,
     _start_profiling_chunk_timing,
 )
+from vllm_ascend.debug_issue45 import trace_phase
 from vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.dspark_context import (
     bind_dspark_context_receiver,
     configure_dspark_kv_transfer,
@@ -352,6 +353,7 @@ class NPUModelRunner(GPUModelRunner):
             pcp_manager._sampling_hidden_restored = True
         self.execute_model_state = state
 
+    @trace_phase
     def sample_tokens(self, grammar_output):
         if (
             lmhead_tp_enable()
@@ -607,6 +609,7 @@ class NPUModelRunner(GPUModelRunner):
             layer.impl.bind_copy_sfa_kv_cache(manager, layer_name)
 
     @torch.inference_mode()
+    @trace_phase
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
@@ -808,6 +811,7 @@ class NPUModelRunner(GPUModelRunner):
                 "scheduled locally — a request sent directly to the decode node)."
             )
 
+    @trace_phase
     def prepare_inputs(  # type: ignore[misc]
         self,
         scheduler_output: SchedulerOutput,
@@ -1273,6 +1277,7 @@ class NPUModelRunner(GPUModelRunner):
         # counters. K3's non-MLA attention uses the KDA device-length path.
         return all_mla_use_flashmla(self.model)
 
+    @trace_phase
     def postprocess_sampled(
         self,
         idx_mapping,
@@ -1331,6 +1336,7 @@ class NPUModelRunner(GPUModelRunner):
             )
             self.num_computed_tokens_event.record()
 
+    @trace_phase
     def _update_seq_lens_cpu(
         self,
         scheduler_output: SchedulerOutput,

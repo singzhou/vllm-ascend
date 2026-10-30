@@ -38,6 +38,7 @@ from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import get_eagle3_aux_lay
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend, AscendAttentionState
 from vllm_ascend.attention.mla_v1 import AscendMLABackend, all_mla_use_flashmla
+from vllm_ascend.debug_issue45 import trace_phase
 from vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.dspark_context import (
     DSparkContextChunk,
     initialize_draft_context_chunk,
@@ -545,6 +546,7 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         )
         return hidden_states
 
+    @trace_phase
     def propose(
         self,
         input_batch: InputBatch,
