@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -71,7 +72,21 @@ class DFlashAclGraphManager(DFlashCudaGraphManager):
         progress_bar_desc: str = "Capturing CUDA graphs",
     ) -> None:
         """Capture ACL graphs for DFlash."""
-        with communicator_switch(), model_capture_wrapper(self.speculator, False):
+        # A speculator whose draft only reads a context window (DSpark) hands
+        # out narrower block tables and its own KV-length buffer. Capture must
+        # bind those, because replay rebinds the attention tasks from metadata
+        # built through the same scope -- and the KV length it tiles for has to
+        # shrink with them, since capture derives its host lengths from
+        # max_model_len alone.
+        capture_max_seq_len = getattr(self.speculator, "draft_attn_capture_max_seq_len", None)
+        if capture_max_seq_len is not None:
+            max_model_len = capture_max_seq_len(max_model_len)
+        draft_input_scope = getattr(self.speculator, "draft_attn_input_scope", None)
+        with (
+            communicator_switch(),
+            model_capture_wrapper(self.speculator, False),
+            draft_input_scope() if draft_input_scope is not None else nullcontext(),
+        ):
             super().capture(
                 forward_fn,
                 input_buffers,
