@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "tokenizer_reference_revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9",
+  "production_choice_ids_match_reference": 128,
+  "production_union_label_ids": 140,
+  "legacy_complete_prompt_token_equality_cases": 26,
+  "boundary": "Real tokenizer + production strategy init; import-only stubs, no engine or weights."
+}

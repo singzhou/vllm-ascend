@@ -70,6 +70,13 @@ paths = [
 ]
 rules = ["generic-api-key"]
 
+# The reference reports record public tokenizer artifact checksums.
+[[allowlists]]
+condition = "AND"
+paths = ['^docs/decisions/qwen36_choice128_(local_)?verified\.json$']
+regexTarget = "line"
+regexes = ['^\s*"tokenizer(_config)?\.json": "[0-9a-f]{64}",?$']
+
 # Placeholder allowlist for syntax validation; does not permit any files
 [[allowlists]]
 paths = ["^$"]
