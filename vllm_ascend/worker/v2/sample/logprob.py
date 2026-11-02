@@ -18,9 +18,9 @@
 # This file is a part of the vllm-ascend project.
 
 import torch
-from vllm.logger import logger
 from vllm.triton_utils import tl, triton
 from vllm.v1.outputs import LogprobsTensors
+from vllm.v1.worker.gpu.sample.logprob import compute_topk_scores
 
 from vllm_ascend.ops.triton.triton_utils import get_vectorcore_num
 
@@ -129,7 +129,16 @@ def compute_topk_logprobs(
     batch_size, vocab_size = logits.shape
 
     if max_per_req_token_ids != 0:
-        logger.warning_once("Custom logprob_token_ids is not supported yet. Falling back to default logprob_token_ids.")
+        # Share v0.30's row mapping, custom-ID padding and Ascend-patched kernels.
+        return compute_topk_scores(
+            logits,
+            num_logprobs,
+            sampled_token_ids,
+            cu_num_logits,
+            logprob_token_ids_state,
+            expanded_idx_mapping,
+            max_per_req_token_ids,
+        )
 
     logprob_token_ids = sampled_token_ids.unsqueeze(-1)
     if num_logprobs > 0:

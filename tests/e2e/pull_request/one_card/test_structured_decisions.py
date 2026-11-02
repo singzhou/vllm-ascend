@@ -8,8 +8,8 @@ from tests.e2e.conftest import RemoteOpenAIServer
 MODEL_NAME = "Qwen/Qwen3-0.6B"
 
 
-@pytest.fixture(scope="module")
-def server():
+@pytest.fixture(scope="module", params=["0", "1"], ids=["runner-v1", "runner-v2"])
+def server(request):
     args = [
         "--dtype",
         "bfloat16",
@@ -20,7 +20,7 @@ def server():
         "32",
         "--enable-prefix-caching",
     ]
-    with RemoteOpenAIServer(MODEL_NAME, args, env_dict={"VLLM_USE_V2_MODEL_RUNNER": "0"}) as remote_server:
+    with RemoteOpenAIServer(MODEL_NAME, args, env_dict={"VLLM_USE_V2_MODEL_RUNNER": request.param}) as remote_server:
         yield remote_server
 
 

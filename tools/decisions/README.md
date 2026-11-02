@@ -6,10 +6,13 @@ plugin registers `POST /v1/systemone` and initializes its handler for
 `Qwen3_5MoeForConditionalGeneration` when serving a generation model.
 
 ```bash
-VLLM_USE_V2_MODEL_RUNNER=0 vllm serve Qwen/Qwen3-0.6B \
+VLLM_USE_V2_MODEL_RUNNER=1 vllm serve Qwen/Qwen3-0.6B \
   --served-model-name qwen-decisions --logprobs-mode raw_logprobs \
   --enable-prefix-caching --port 8010
 ```
+
+Set `VLLM_USE_V2_MODEL_RUNNER=0` for V1. V2 reads the same candidate IDs through
+its regular sampler and through rejection sampling when a batch also contains draft tokens.
 
 Each named question reads one token's label probabilities. Supported question
 types are `choice` (1–128 options), `noul` and `score`. The handler checks the
