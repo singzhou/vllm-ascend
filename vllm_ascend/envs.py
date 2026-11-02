@@ -36,6 +36,10 @@ def _strict_binary_env(name: str, default: str = "0") -> bool:
 
 
 env_variables: dict[str, Callable[[], Any]] = {
+    # Structured Decisions hybrid shared-prefix warmup. Values: 0/1; default 0
+    # until target-device correctness/performance acceptance. Non-sensitive;
+    # API-server performance A/B switch, not a request option.
+    "VLLM_ASCEND_DECISIONS_WARM_SHARED_PREFIX": lambda: _strict_binary_env("VLLM_ASCEND_DECISIONS_WARM_SHARED_PREFIX"),
     # max compile thread number for package building. Usually, it is set to
     # the number of CPU cores. If not set, the default value is None, which
     # means all number of CPU cores will be used.
