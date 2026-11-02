@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -59,3 +61,27 @@ def test_compute_topk_logprobs(batch_size, vocab_size, num_logprobs):
         f"Logprobs values differ between Triton and PyTorch.\n"
         f"Max diff: {torch.max(torch.abs(triton_output.logprobs - ref_logprobs))}"
     )
+
+
+@pytest.mark.parametrize("num_topk", [0, 3])
+def test_v2_custom_logprobs_mixed_rows(num_topk):
+    init_device_properties_triton()
+    # State slots 2 and 0 request custom IDs; slot 1 uses ordinary top-k.
+    candidates = torch.arange(128, device="npu", dtype=torch.int32).repeat(3, 1)
+    candidates[0, :2] = torch.tensor([42, 9], device="npu")
+    state = SimpleNamespace(
+        token_ids=SimpleNamespace(gpu=candidates),
+        num_token_ids=SimpleNamespace(gpu=torch.tensor([2, 0, 128], device="npu", dtype=torch.int32)),
+    )
+    slots = torch.tensor([2, 1, 1, 0], device="npu", dtype=torch.int32)
+    logits = torch.arange(256, device="npu", dtype=torch.float32).repeat(4, 1) / 100
+    sampled = torch.full((4,), 255, device="npu", dtype=torch.int64)
+    result = compute_topk_logprobs(logits, num_topk, sampled, [0, 1, 3, 4], state, slots, 128)
+    assert result.cu_num_generated_tokens == [0, 1, 3, 4]
+    assert result.logprobs.shape == (4, 129)
+    reference = logits.log_softmax(-1)
+    for row, labels in enumerate((list(range(128)), [255, 254, 253][:num_topk], [255, 254, 253][:num_topk], [42, 9])):
+        ids = [255, *labels]
+        assert result.logprob_token_ids[row, : len(ids)].tolist() == ids
+        torch.testing.assert_close(result.logprobs[row, : len(ids)], reference[row, ids], atol=1e-4, rtol=1e-4)
+        assert result.logprobs[row, len(ids) :].isneginf().all()

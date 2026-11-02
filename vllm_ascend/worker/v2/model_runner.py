@@ -124,6 +124,7 @@ from vllm_ascend.worker.v2.pp_transport import (
 )
 from vllm_ascend.worker.v2.spec_decode import init_speculator
 from vllm_ascend.worker.v2.spec_decode.eagle.speculator import AscendEagleSpeculator
+from vllm_ascend.worker.v2.spec_decode.rejection_sampler import AscendRejectionSampler
 from vllm_ascend.worker.v2.states import AscendRequestState
 from vllm_ascend.worker.v2.utils import (
     AscendV2KVBlockZeroer,
@@ -132,6 +133,9 @@ from vllm_ascend.worker.v2.utils import (
     prepare_v41_source_rope,
     torch_cuda_wrapper,
 )
+
+# The upstream loader looks up this factory when constructing the default V2 sampler pair.
+vllm_model_runner.RejectionSampler = AscendRejectionSampler
 
 
 class NPUModelRunner(GPUModelRunner):
@@ -309,6 +313,11 @@ class NPUModelRunner(GPUModelRunner):
     def load_model(self, load_dummy_weights: bool = False, *args, **kwargs) -> None:
         aux_layers = get_pd_dspark_aux_layer_ids(self.vllm_config)
         super().load_model(load_dummy_weights, *args, **kwargs)
+        if self.batch_sharder is not None and isinstance(self.rejection_sampler, AscendRejectionSampler):
+            # v0.30 passes include_token_ids=False to the TP gather on draft steps.
+            # Both Ascend samplers now emit the custom columns, so size the gather for them.
+            get_dims = self.sampler.get_logprobs_dims
+            self.sampler.get_logprobs_dims = lambda idx_mapping_np, include_token_ids=True: get_dims(idx_mapping_np)
         self.pd_dspark_aux_layer_ids = aux_layers
         # In cudagraph modes the dumper must be started before graph capture so
         # that aclgraph capture/replay is instrumented (v1 parity: v1 starts
