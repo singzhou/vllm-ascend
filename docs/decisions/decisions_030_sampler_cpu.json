@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "torch": "2.10.0+cpu",
+  "device": "cpu",
+  "source_commit": "ced6857afa0ea7b2e3f0846a62e1394e90f15607",
+  "source_sha256": {
+    "vllm/v1/outputs.py": "65ab7698bbdea1d53502ef8df3689bec860521ab6e2fab3c7bff63151be039b1",
+    "vllm/v1/sample/ops/logprobs.py": "b286f69012a6758bfe9250038b0697294dbffe0d32c6906f284c39f75ee48be3",
+    "vllm/v1/sample/sampler.py": "f95805b2c6d06218c724826aa5f881a606e8d0a534a566aee7c85948520dd216"
+  },
+  "helper_compile_backend": "eager",
+  "omitted_missing_mark_unbacked_annotations": 0,
+  "checks": [
+    "mixed 2/26/128 IDs",
+    "129 padded columns",
+    "padding=-inf",
+    "sampled inside/outside candidates",
+    "128 candidates plus outside sample",
+    "request-index mapping reordering",
+    "no selections",
+    "empty selection"
+  ],
+  "boundary": "CPU gather math and shape only; no NPU buffer, transfer or runner proof"
+}
