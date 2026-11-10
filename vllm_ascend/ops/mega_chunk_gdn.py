@@ -7,6 +7,7 @@ import torch
 from vllm.logger import init_logger
 from vllm.third_party.flash_linear_attention.ops.l2norm import l2norm_fwd
 
+from vllm_ascend import envs
 from vllm_ascend.utils import enable_custom_op
 
 logger = init_logger(__name__)
@@ -55,15 +56,38 @@ def mega_chunk_gdn_prefill(
     initial_state: torch.Tensor,
     cu_seqlens: torch.Tensor,
     cu_seqlens_host: tuple[int, ...],
+    *,
+    layer_name: str | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     op = _get_mega_chunk_gdn_op()
     num_value_heads = v.shape[2]
     num_chunks = sum(
         (end - start + _CHUNK_SIZE - 1) // _CHUNK_SIZE for start, end in zip(cu_seqlens_host, cu_seqlens_host[1:])
     )
+    num_matrices = num_chunks * num_value_heads
+    stream = None
+    if envs.VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG:
+        rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        stream = torch.npu.current_stream(v.device)
+        tag = f"MegaChunkGdn rank={rank} device={v.device} layer={layer_name}"
+        logger.info(
+            "%s phase=wait_prior q=%s v=%s state=%s host_starts=%s num_matrices=%d",
+            tag,
+            tuple(q.shape),
+            tuple(v.shape),
+            tuple(initial_state.shape),
+            cu_seqlens_host,
+            num_matrices,
+        )
+        stream.synchronize()
+        device_starts = tuple(cu_seqlens.cpu().tolist())
+        logger.info("%s phase=prepare_inputs device_starts=%s", tag, device_starts)
+        if device_starts != cu_seqlens_host:
+            raise RuntimeError(f"{tag} sequence boundaries differ: host={cu_seqlens_host}, device={device_starts}")
+
     # The cache uses [V, K] while the xLLM kernel consumes and returns [K, V].
     state = initial_state.transpose(-1, -2).to(v.dtype).contiguous()
-    out, final_state = op(
+    args = (
         l2norm_fwd(q.contiguous()).contiguous(),
         l2norm_fwd(k.contiguous()).contiguous(),
         v.contiguous(),
@@ -72,6 +96,14 @@ def mega_chunk_gdn_prefill(
         *_get_masks(v.device),
         cu_seqlens.to(torch.int32).contiguous(),
         state,
-        num_chunks * num_value_heads,
+        num_matrices,
     )
+    if stream is not None:
+        stream.synchronize()
+        logger.info("%s phase=launch", tag)
+    out, final_state = op(*args)
+    if stream is not None:
+        logger.info("%s phase=wait_kernel", tag)
+        stream.synchronize()
+        logger.info("%s phase=complete", tag)
     return out * (q.shape[-1] ** -0.5), final_state.transpose(-1, -2)

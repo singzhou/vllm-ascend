@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from torch import nn
+from vllm.config import CUDAGraphMode
 from vllm.forward_context import ForwardContext, override_forward_context
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 
@@ -123,10 +124,23 @@ def _make_layer() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("initial_state", [True, False])
-@pytest.mark.parametrize("mega_enabled,mega_supported", [(False, True), (True, False), (True, True)])
-def test_mixed_non_spec_splits_conv_per_slice(initial_state, mega_enabled, mega_supported, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "mega_enabled,mega_supported,graph_mode,capturing",
+    [
+        (False, True, CUDAGraphMode.NONE, False),
+        (True, False, CUDAGraphMode.NONE, False),
+        (True, True, CUDAGraphMode.NONE, False),
+        (True, True, CUDAGraphMode.NONE, True),
+        (True, True, CUDAGraphMode.PIECEWISE, False),
+    ],
+)
+def test_mixed_non_spec_splits_conv_per_slice(
+    initial_state, mega_enabled, mega_supported, graph_mode, capturing, monkeypatch
+) -> None:
     monkeypatch.setenv("VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN", str(int(mega_enabled)))
-    use_mega = mega_enabled and mega_supported
+    monkeypatch.setattr("vllm.envs.VLLM_USE_V2_MODEL_RUNNER", True)
+    check_mega_shape = mega_enabled and graph_mode == CUDAGraphMode.NONE and not capturing
+    use_mega = check_mega_shape and mega_supported
     layer = _make_layer()
     metadata = _make_mixed_metadata()
     if not initial_state:
@@ -149,6 +163,8 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state, mega_enabled, mega_
         no_compile_layers={layer.prefix: layer},
         attn_metadata={layer.prefix: metadata},
         slot_mapping={},
+        cudagraph_runtime_mode=graph_mode,
+        additional_kwargs={"capturing": capturing},
     )
 
     recurrent_calls: list[dict[str, torch.Tensor]] = []
@@ -190,7 +206,7 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state, mega_enabled, mega_
         patch("vllm_ascend.ops.gdn.supports_mega_chunk_gdn", return_value=mega_supported) as supports_mega,
         patch(
             "vllm_ascend.ops.gdn.mega_chunk_gdn_prefill",
-            side_effect=lambda q, k, v, g, beta, state, starts, host_starts: (v, state + 1),
+            side_effect=lambda q, k, v, g, beta, state, starts, host_starts, *, layer_name: (v, state + 1),
         ) as mega_mock,
         patch(
             "vllm_ascend.ops.gdn.scatter_ssm_states_",
@@ -267,10 +283,11 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state, mega_enabled, mega_
     else:
         assert prefill_conv.call_args.kwargs["has_initial_state"] is None
     torch.testing.assert_close(decode_conv.call_args.kwargs["query_start_loc"], torch.tensor([0, 1], dtype=torch.int32))
-    assert supports_mega.called == mega_enabled
+    assert supports_mega.called == check_mega_shape
     if use_mega:
         chunk_mock.assert_not_called()
         mega_mock.assert_called_once()
+        assert mega_mock.call_args.kwargs["layer_name"] == layer.prefix
         q, k, v, *_, starts, host_starts = mega_mock.call_args.args
         torch.testing.assert_close(starts, metadata.prefill_query_start_loc)
         assert host_starts == (0, 2)

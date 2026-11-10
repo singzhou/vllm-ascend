@@ -26,6 +26,7 @@ from fla_npu.ops.ascendc import (
     recurrent_gated_delta_rule,
 )
 from torch import nn
+from vllm.config import CUDAGraphMode
 from vllm.distributed import get_pcp_group
 from vllm.forward_context import get_forward_context
 from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
@@ -38,6 +39,7 @@ from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 from vllm.v1.attention.backends.utils import PAD_SLOT_ID
 
 from vllm_ascend import envs
+from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.utils import (
     maybe_save_kv_layer_to_connector,
     wait_for_kv_layer_from_connector,
@@ -820,7 +822,8 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             use_mega_chunk = (
                 envs.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN
                 and use_local_prefill
-                and not getattr(forward_context, "capturing", False)
+                and forward_context.cudagraph_runtime_mode == CUDAGraphMode.NONE
+                and not _EXTRA_CTX.capturing
                 and hardware.supports(HardwareCapability.MEGA_CHUNK_GDN_PREFILL)
                 and supports_mega_chunk_gdn(query_non_spec, value_non_spec, chunk_meta.cu_seqlens_host)
             )
@@ -854,6 +857,7 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                         initial_state,
                         prefill_query_start_loc,
                         chunk_meta.cu_seqlens_host,
+                        layer_name=self.prefix,
                     )
                 else:
                     core_attn_out_non_spec, last_recurrent_state = DeviceOperator.fla_gdn_prefill(

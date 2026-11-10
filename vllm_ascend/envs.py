@@ -85,6 +85,9 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Enable the MegaChunkGdn prefill operator on Atlas A2.
     # Default: 0 (disabled). Valid values: 0 or 1. Not sensitive.
     "VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN": lambda: _strict_binary_env("VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN"),
+    # Trace MegaChunkGdn calls and synchronize the NPU stream for hang diagnosis.
+    # Default: 0 (disabled). Valid values: 0 or 1. Not sensitive.
+    "VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG": lambda: _strict_binary_env("VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG"),
     # Override the Unified Buffer (UB) size in KB for Triton kernel tile sizing.
     # 0 (default): auto-detect from device properties, falling back to 192 KB
     # (safe for Ascend 910B/A3). Set to a positive value to override when
