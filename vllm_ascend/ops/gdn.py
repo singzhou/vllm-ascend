@@ -37,6 +37,7 @@ from vllm.v1.attention.backend import AttentionBackend, AttentionMetadata  # typ
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 from vllm.v1.attention.backends.utils import PAD_SLOT_ID
 
+from vllm_ascend import envs
 from vllm_ascend.attention.utils import (
     maybe_save_kv_layer_to_connector,
     wait_for_kv_layer_from_connector,
@@ -46,6 +47,7 @@ from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNFusedAttentionBackend
 from vllm_ascend.ops.gdn_recurrent import legacy_recurrent_gated_delta_rule, select_gdn_recurrent_backend
+from vllm_ascend.ops.mega_chunk_gdn import mega_chunk_gdn_prefill, supports_mega_chunk_gdn
 from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule
 from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
@@ -812,36 +814,59 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                 g_non_spec = g_non_spec[:, num_decode_tokens:]
                 beta_non_spec = beta_non_spec[:, num_decode_tokens:]
 
-            use_fla_gdn_prefill = get_pcp_group().world_size == 1 and get_current_hardware_profile().supports(
-                HardwareCapability.FLA_GDN_PREFILL
+            chunk_meta = attn_metadata.non_spec_prefill_metadata.chunk
+            use_local_prefill = get_pcp_group().world_size == 1
+            hardware = get_current_hardware_profile()
+            use_mega_chunk = (
+                envs.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN
+                and use_local_prefill
+                and not getattr(forward_context, "capturing", False)
+                and hardware.supports(HardwareCapability.MEGA_CHUNK_GDN_PREFILL)
+                and supports_mega_chunk_gdn(query_non_spec, value_non_spec, chunk_meta.cu_seqlens_host)
+            )
+            use_fla_gdn_prefill = (
+                not use_mega_chunk and use_local_prefill and hardware.supports(HardwareCapability.FLA_GDN_PREFILL)
             )
             fla_gdn_prefill_op = _get_fla_gdn_prefill_op() if use_fla_gdn_prefill else None
             # The built-in fused operator is NPU-only. Keep CPU/unit-test
             # dispatch on the Triton-compatible path even when its availability
             # probe was cached globally.
             use_fused_chunk = (
-                fla_gdn_prefill_op is None
+                not use_mega_chunk
+                and fla_gdn_prefill_op is None
                 and query_non_spec.device.type != "cpu"
+                and use_local_prefill
                 and AscendGatedDeltaNetAttention._probe_fused_chunk()
-                and get_pcp_group().world_size == 1
             )
-            if fla_gdn_prefill_op is not None:
+            if use_mega_chunk or fla_gdn_prefill_op is not None:
                 initial_state = gather_ssm_states(
                     ssm_state,
                     prefill_state_indices,
                     prefill_has_initial_state,
                 )
-                (core_attn_out_non_spec, last_recurrent_state) = DeviceOperator.fla_gdn_prefill(
-                    q=query_non_spec,
-                    k=key_non_spec,
-                    v=value_non_spec,
-                    g=g_non_spec,
-                    beta=beta_non_spec,
-                    initial_state=initial_state,
-                    scale=key_non_spec.shape[-1] ** -0.5,
-                    prebuilt_meta=attn_metadata.non_spec_prefill_metadata.chunk,
-                    fused_fwd=fla_gdn_prefill_op,
-                )
+                if use_mega_chunk:
+                    core_attn_out_non_spec, last_recurrent_state = mega_chunk_gdn_prefill(
+                        query_non_spec,
+                        key_non_spec,
+                        value_non_spec,
+                        g_non_spec,
+                        beta_non_spec,
+                        initial_state,
+                        prefill_query_start_loc,
+                        chunk_meta.cu_seqlens_host,
+                    )
+                else:
+                    core_attn_out_non_spec, last_recurrent_state = DeviceOperator.fla_gdn_prefill(
+                        q=query_non_spec,
+                        k=key_non_spec,
+                        v=value_non_spec,
+                        g=g_non_spec,
+                        beta=beta_non_spec,
+                        initial_state=initial_state,
+                        scale=key_non_spec.shape[-1] ** -0.5,
+                        prebuilt_meta=chunk_meta,
+                        fused_fwd=fla_gdn_prefill_op,
+                    )
                 scatter_ssm_states_(
                     ssm_state,
                     prefill_state_indices,
@@ -886,7 +911,7 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                     initial_state=initial_state,
                     output_final_state=True,
                     cu_seqlens=prefill_query_start_loc,
-                    prebuilt_meta=attn_metadata.non_spec_prefill_metadata.chunk,
+                    prebuilt_meta=chunk_meta,
                     head_first=False,
                     use_qk_l2norm_in_kernel=True,
                 )

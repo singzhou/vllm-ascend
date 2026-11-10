@@ -9,6 +9,7 @@ from torch import nn
 from vllm.forward_context import ForwardContext, override_forward_context
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 
+from vllm_ascend.device.hardware_profile import HardwareCapability
 from vllm_ascend.ops.gdn import (
     AscendGatedDeltaNetAttention,
     _pack_conv_weights,
@@ -57,7 +58,7 @@ def _make_mixed_metadata() -> GDNAttentionMetadata:
             cache_indices=torch.tensor([0, 1], dtype=torch.int32),
             initial_state_mode=torch.tensor([1, 1], dtype=torch.int32),
         ),
-        chunk=Mock(name="chunk_metadata"),
+        chunk=Mock(name="chunk_metadata", cu_seqlens_host=(0, 2)),
     )
     metadata.non_spec_decode_metadata = GDNDecodeMetadata(
         causal_conv1d=GDNCausalConv1dMetadata(
@@ -122,7 +123,10 @@ def _make_layer() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("initial_state", [True, False])
-def test_mixed_non_spec_splits_conv_per_slice(initial_state) -> None:
+@pytest.mark.parametrize("mega_enabled,mega_supported", [(False, True), (True, False), (True, True)])
+def test_mixed_non_spec_splits_conv_per_slice(initial_state, mega_enabled, mega_supported, monkeypatch) -> None:
+    monkeypatch.setenv("VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN", str(int(mega_enabled)))
+    use_mega = mega_enabled and mega_supported
     layer = _make_layer()
     metadata = _make_mixed_metadata()
     if not initial_state:
@@ -179,7 +183,18 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state) -> None:
         ),
         patch(
             "vllm_ascend.ops.gdn.get_current_hardware_profile",
-            return_value=SimpleNamespace(supports=lambda _: False),
+            return_value=SimpleNamespace(
+                supports=lambda capability: capability == HardwareCapability.MEGA_CHUNK_GDN_PREFILL
+            ),
+        ),
+        patch("vllm_ascend.ops.gdn.supports_mega_chunk_gdn", return_value=mega_supported) as supports_mega,
+        patch(
+            "vllm_ascend.ops.gdn.mega_chunk_gdn_prefill",
+            side_effect=lambda q, k, v, g, beta, state, starts, host_starts: (v, state + 1),
+        ) as mega_mock,
+        patch(
+            "vllm_ascend.ops.gdn.scatter_ssm_states_",
+            side_effect=lambda state, indices, source: state.index_copy_(0, indices, source),
         ),
         patch(
             "vllm_ascend.ops.gdn.DeviceOperator.fused_gdn_gating",
@@ -252,18 +267,30 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state) -> None:
     else:
         assert prefill_conv.call_args.kwargs["has_initial_state"] is None
     torch.testing.assert_close(decode_conv.call_args.kwargs["query_start_loc"], torch.tensor([0, 1], dtype=torch.int32))
-    prefill_call = chunk_mock.call_args.kwargs
+    assert supports_mega.called == mega_enabled
+    if use_mega:
+        chunk_mock.assert_not_called()
+        mega_mock.assert_called_once()
+        q, k, v, *_, starts, host_starts = mega_mock.call_args.args
+        torch.testing.assert_close(starts, metadata.prefill_query_start_loc)
+        assert host_starts == (0, 2)
+        torch.testing.assert_close(layer.kv_cache[1][1], torch.ones_like(layer.kv_cache[1][1]))
+        assert not layer.kv_cache[1][0].any()
+    else:
+        mega_mock.assert_not_called()
+        prefill_call = chunk_mock.call_args.kwargs
+        q, k, v = (prefill_call[name] for name in ("q", "k", "v"))
     fused_chunk_mock.assert_not_called()
     torch.testing.assert_close(
-        prefill_call["q"],
+        q,
         torch.tensor([[[[3.0, 4.0]], [[5.0, 6.0]]]]),
     )
     torch.testing.assert_close(
-        prefill_call["k"],
+        k,
         torch.tensor([[[[13.0, 14.0]], [[15.0, 16.0]]]]),
     )
     torch.testing.assert_close(
-        prefill_call["v"],
+        v,
         torch.tensor([[[[23.0, 24.0]], [[25.0, 26.0]]]]),
     )
 

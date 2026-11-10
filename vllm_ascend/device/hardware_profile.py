@@ -92,6 +92,8 @@ class HardwareCapability(Enum):
     DYNAMIC_MX_QUANT_SCALE_ALG_ONE = auto()
     # Allow GDN prefill to use the external FLA NPU fused operator.
     FLA_GDN_PREFILL = auto()
+    # Allow GDN prefill to use the optional xLLM Ascend910B MegaChunkGdn package.
+    MEGA_CHUNK_GDN_PREFILL = auto()
     # Enable the FP8/C8 attention KV-cache ABI and matching attention preprocess paths.
     # This is not a general statement that every FP8 operation is supported.
     FP8_ATTENTION = auto()
@@ -288,7 +290,8 @@ _HARDWARE_PROFILES: Mapping[AscendDeviceType, HardwareProfile] = MappingProxyTyp
             weight_layout_policy=WeightLayoutPolicy.CONFIGURABLE,
             moe_comm_policy=MoECommPolicy.CAPACITY_AND_EXPERT_DENSITY,
             quantization_backend_family=QuantizationBackendFamily.STANDARD,
-            capabilities=_STANDARD_CAPABILITIES | {HardwareCapability.NPU_TOP_K_TOP_P},
+            capabilities=_STANDARD_CAPABILITIES
+            | {HardwareCapability.NPU_TOP_K_TOP_P, HardwareCapability.MEGA_CHUNK_GDN_PREFILL},
         ),
         AscendDeviceType.A3: HardwareProfile(
             _device_type=AscendDeviceType.A3,
