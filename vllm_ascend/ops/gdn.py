@@ -29,6 +29,7 @@ from torch import nn
 from vllm.config import CUDAGraphMode
 from vllm.distributed import get_pcp_group
 from vllm.forward_context import get_forward_context
+from vllm.logger import init_logger
 from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
 from vllm.model_executor.layers.mamba.mamba_utils import MambaStateShapeCalculator
 from vllm.model_executor.utils import replace_parameter
@@ -57,6 +58,7 @@ from vllm_ascend.ops.triton.mamba.causal_conv1d import extract_last_width
 from vllm_ascend.ops.triton.mamba.state_index import gather_ssm_states, scatter_ssm_states_
 
 _PACKED_CONV_WEIGHT_NAME = "ascend_conv1d_weight"
+logger = init_logger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -483,6 +485,14 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
         assert isinstance(attn_metadata, dict)
         attn_metadata = attn_metadata[self.prefix]
         assert isinstance(attn_metadata, GDNAttentionMetadata)
+        mega_debug = envs.VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG
+        if mega_debug:
+            logger.warning_once(
+                "MegaChunkGdn GDN forward has_prefill=%s graph_mode=%s",
+                attn_metadata.num_prefills > 0,
+                forward_context.cudagraph_runtime_mode.name,
+                scope="process",
+            )
         spec_sequence_masks = attn_metadata.spec_sequence_masks
         spec_token_indx = attn_metadata.spec_token_indx
         non_spec_token_indx = attn_metadata.non_spec_token_indx
@@ -819,14 +829,33 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             chunk_meta = attn_metadata.non_spec_prefill_metadata.chunk
             use_local_prefill = get_pcp_group().world_size == 1
             hardware = get_current_hardware_profile()
-            use_mega_chunk = (
-                envs.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN
+            mega_enabled = envs.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN
+            graph_mode = forward_context.cudagraph_runtime_mode
+            capturing = bool(_EXTRA_CTX.capturing) if mega_enabled or mega_debug else False
+            mega_supported = hardware.supports(HardwareCapability.MEGA_CHUNK_GDN_PREFILL)
+            mega_eligible = (
+                mega_enabled
                 and use_local_prefill
-                and forward_context.cudagraph_runtime_mode == CUDAGraphMode.NONE
-                and not _EXTRA_CTX.capturing
-                and hardware.supports(HardwareCapability.MEGA_CHUNK_GDN_PREFILL)
-                and supports_mega_chunk_gdn(query_non_spec, value_non_spec, chunk_meta.cu_seqlens_host)
+                and graph_mode == CUDAGraphMode.NONE
+                and not capturing
+                and mega_supported
             )
+            use_mega_chunk = mega_eligible and supports_mega_chunk_gdn(
+                query_non_spec, value_non_spec, chunk_meta.cu_seqlens_host
+            )
+            if mega_debug:
+                logger.warning_once(
+                    "MegaChunkGdn dispatch selected=%s enabled=%s pcp_is_single=%s "
+                    "graph_mode=%s capturing=%s hardware_supported=%s input_supported=%s",
+                    use_mega_chunk,
+                    mega_enabled,
+                    use_local_prefill,
+                    graph_mode.name,
+                    capturing,
+                    mega_supported,
+                    use_mega_chunk if mega_eligible else "unchecked",
+                    scope="process",
+                )
             use_fla_gdn_prefill = (
                 not use_mega_chunk and use_local_prefill and hardware.supports(HardwareCapability.FLA_GDN_PREFILL)
             )

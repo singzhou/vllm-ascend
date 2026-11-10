@@ -496,6 +496,14 @@ class NPUWorker(WorkerBase):
         return device
 
     def init_device(self):
+        if envs_ascend.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN or envs_ascend.VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG:
+            logger.warning(
+                "MegaChunkGdn startup rank=%s enabled=%s debug=%s mrv2=%s",
+                self.rank,
+                envs_ascend.VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN,
+                envs_ascend.VLLM_ASCEND_MEGA_CHUNK_GDN_DEBUG,
+                self.use_v2_model_runner,
+            )
         # NOTE: KEEP device the member of `NPUWorker`, as it will be checked
         # in ray scenario. see https://github.com/vllm-project/vllm/pull/26845
         # for more details
