@@ -47,6 +47,32 @@ def _get_masks(device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.
     return ones.tril(-1), ones.tril(), -torch.eye(_CHUNK_SIZE, device=device, dtype=torch.bfloat16)
 
 
+def log_mega_chunk_gdn_comparison(
+    layer_name: str,
+    output: torch.Tensor,
+    final_state: torch.Tensor,
+    reference_output: torch.Tensor,
+    reference_state: torch.Tensor,
+) -> None:
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    metrics = []
+    for actual, reference in ((output, reference_output), (final_state, reference_state)):
+        reference = reference.float()
+        delta = actual.float() - reference
+        metrics.extend((delta.abs().amax(), delta.square().sum(), reference.square().sum()))
+    out_max, out_error, out_norm, state_max, state_error, state_norm = torch.stack(metrics).cpu().tolist()
+    logger.warning(
+        "MegaChunkGdn compare rank=%s layer=%s output_max_abs=%.6g output_rel_l2=%.6g "
+        "state_max_abs=%.6g state_rel_l2=%.6g",
+        rank,
+        layer_name,
+        out_max,
+        (out_error / max(out_norm, 1e-12)) ** 0.5,
+        state_max,
+        (state_error / max(state_norm, 1e-12)) ** 0.5,
+    )
+
+
 def mega_chunk_gdn_prefill(
     q: torch.Tensor,
     k: torch.Tensor,

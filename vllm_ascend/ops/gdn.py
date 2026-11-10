@@ -50,7 +50,11 @@ from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNFusedAttentionBackend
 from vllm_ascend.ops.gdn_recurrent import legacy_recurrent_gated_delta_rule, select_gdn_recurrent_backend
-from vllm_ascend.ops.mega_chunk_gdn import mega_chunk_gdn_prefill, supports_mega_chunk_gdn
+from vllm_ascend.ops.mega_chunk_gdn import (
+    log_mega_chunk_gdn_comparison,
+    mega_chunk_gdn_prefill,
+    supports_mega_chunk_gdn,
+)
 from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule
 from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
@@ -888,6 +892,29 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                         chunk_meta.cu_seqlens_host,
                         layer_name=self.prefix,
                     )
+                    if envs.VLLM_ASCEND_MEGA_CHUNK_GDN_COMPARE_FLA:
+                        reference_op = _get_fla_gdn_prefill_op()
+                        if reference_op is None:
+                            logger.warning_once("MegaChunkGdn comparison requires the FLA prefill operator.")
+                        else:
+                            reference_output, reference_state = DeviceOperator.fla_gdn_prefill(
+                                q=query_non_spec,
+                                k=key_non_spec,
+                                v=value_non_spec,
+                                g=g_non_spec,
+                                beta=beta_non_spec,
+                                initial_state=initial_state,
+                                scale=key_non_spec.shape[-1] ** -0.5,
+                                prebuilt_meta=chunk_meta,
+                                fused_fwd=reference_op,
+                            )
+                            log_mega_chunk_gdn_comparison(
+                                self.prefix,
+                                core_attn_out_non_spec,
+                                last_recurrent_state,
+                                reference_output,
+                                reference_state,
+                            )
                 else:
                     core_attn_out_non_spec, last_recurrent_state = DeviceOperator.fla_gdn_prefill(
                         q=query_non_spec,

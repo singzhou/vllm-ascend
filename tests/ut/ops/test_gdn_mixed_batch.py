@@ -138,6 +138,7 @@ def test_mixed_non_spec_splits_conv_per_slice(
     initial_state, mega_enabled, mega_supported, graph_mode, capturing, monkeypatch
 ) -> None:
     monkeypatch.setenv("VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN", str(int(mega_enabled)))
+    monkeypatch.setenv("VLLM_ASCEND_MEGA_CHUNK_GDN_COMPARE_FLA", "1")
     monkeypatch.setattr("vllm.envs.VLLM_USE_V2_MODEL_RUNNER", True)
     check_mega_shape = mega_enabled and graph_mode == CUDAGraphMode.NONE and not capturing
     use_mega = check_mega_shape and mega_supported
@@ -208,6 +209,12 @@ def test_mixed_non_spec_splits_conv_per_slice(
             "vllm_ascend.ops.gdn.mega_chunk_gdn_prefill",
             side_effect=lambda q, k, v, g, beta, state, starts, host_starts, *, layer_name: (v, state + 1),
         ) as mega_mock,
+        patch("vllm_ascend.ops.gdn._get_fla_gdn_prefill_op", return_value=Mock()),
+        patch(
+            "vllm_ascend.ops.gdn.DeviceOperator.fla_gdn_prefill",
+            side_effect=lambda **kwargs: (kwargs["v"], kwargs["initial_state"] + 2),
+        ) as reference_mock,
+        patch("vllm_ascend.ops.gdn.log_mega_chunk_gdn_comparison") as comparison_mock,
         patch(
             "vllm_ascend.ops.gdn.scatter_ssm_states_",
             side_effect=lambda state, indices, source: state.index_copy_(0, indices, source),
@@ -284,6 +291,7 @@ def test_mixed_non_spec_splits_conv_per_slice(
         assert prefill_conv.call_args.kwargs["has_initial_state"] is None
     torch.testing.assert_close(decode_conv.call_args.kwargs["query_start_loc"], torch.tensor([0, 1], dtype=torch.int32))
     assert supports_mega.called == check_mega_shape
+    assert reference_mock.called == comparison_mock.called == use_mega
     if use_mega:
         chunk_mock.assert_not_called()
         mega_mock.assert_called_once()
