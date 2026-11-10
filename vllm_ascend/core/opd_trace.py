@@ -12,6 +12,12 @@ from vllm.v1.core.sched.scheduler import Scheduler
 logger = init_logger(__name__)
 
 
+def effective_draft_widths(batch):
+    """Read the final sampler boundaries, subtracting DSpark's one target row."""
+    offsets = batch.cu_num_logits[: len(batch.req_ids) + 1].tolist()
+    return {rid: end - start - 1 for rid, start, end in zip(batch.req_ids, offsets, offsets[1:])}
+
+
 class _OPDTrace:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -21,6 +27,18 @@ class _OPDTrace:
             raise ValueError("OPD trace requires a draft revision and detailed per-request metrics")
         if spec is None or spec.method != "dspark" or spec.num_speculative_tokens != 7:
             raise ValueError("OPD trace expects DSpark with seven proposals")
+        if bool(self.scheduler_config.async_scheduling) != isinstance(self, OPDTraceAsyncScheduler):
+            raise ValueError("OPD scheduler class must match the service's async_scheduling setting")
+        if getattr(spec, "num_speculative_tokens_per_batch_size", None):
+            raise ValueError("variable DSpark proposal query width is not supported by OPD replay")
+        self._runner_widths = bool(spec.enable_adaptive_verification)
+        if self._runner_widths and not self.vllm_config.use_v2_model_runner:
+            raise ValueError("OPD runtime-width telemetry requires runner V2 for adaptive verification")
+        if self.scheduler_config.async_scheduling and not self.vllm_config.use_v2_model_runner:
+            from vllm_ascend.ascend_config import get_ascend_config
+
+            if get_ascend_config().dynamic_spec_config.method == "dspark":
+                raise ValueError("V1 async dynamic verification has no reliable OPD width telemetry")
         self._sample_from_anchor = getattr(spec.draft_model_config.hf_config, "sample_from_anchor", True)
 
     def update_from_output(self, scheduler_output, model_runner_output):
@@ -41,6 +59,10 @@ class _OPDTrace:
                 continue
             m = req.spec_decode_metrics
             verified = len(m.per_step_drafted) == step + 1
+            drafted = m.per_step_drafted[step] if verified else None
+            effective = drafted
+            if verified and self._runner_widths:
+                effective = getattr(model_runner_output, "opd_verify_widths", {}).get(req.request_id)
             event = {
                 "request_id": req.request_id,
                 "trace_id": trace_id,
@@ -48,7 +70,8 @@ class _OPDTrace:
                 "sample_from_anchor": self._sample_from_anchor,
                 "offset": offset,
                 "token_ids": ids,
-                "drafted": m.per_step_drafted[step] if verified else None,
+                "drafted": drafted,
+                "verified_width": effective,
                 "accepted": m.per_step_accepted[step] if verified else None,
                 "invalid": (scheduler_output.num_invalid_spec_tokens or {}).get(req.request_id, 0),
                 "preemptions": req.num_preemptions,

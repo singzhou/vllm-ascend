@@ -152,6 +152,14 @@ class NPUModelRunner(GPUModelRunner):
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         # Keep exact host counts until all active consumers are known.
+        self._trace_opd_widths = bool(
+            vllm_config.speculative_config
+            and vllm_config.speculative_config.enable_adaptive_verification
+            and vllm_config.scheduler_config.scheduler_cls in (
+                "vllm_ascend.core.opd_trace.OPDTraceScheduler",
+                "vllm_ascend.core.opd_trace.OPDTraceAsyncScheduler",
+            )
+        )
         self._skip_spec_cpu_length_sync = False
         # Ascend-specific configurations
         self.ascend_config = get_ascend_config()
@@ -387,7 +395,17 @@ class NPUModelRunner(GPUModelRunner):
         if pcp_manager is not None and isinstance(pcp_manager, AscendPCPManager):
             pcp_manager._sampling_hidden_restored = False
         self._restore_replicated_draft_target_states()
+        widths = None
+        if self._trace_opd_widths and self.execute_model_state is not None and self.is_last_pp_rank:
+            from vllm_ascend.core.opd_trace import effective_draft_widths
+
+            # Under adaptive verification the CPU array is only an upper bound.
+            # Snapshot the device boundaries used by the sampler before reuse.
+            widths = effective_draft_widths(self.execute_model_state.input_batch)
         output = super().sample_tokens(grammar_output)
+        if widths is not None and output is not None:
+            runner_output = getattr(output, "model_runner_output", output)
+            runner_output.opd_verify_widths = widths
         if self.use_spec_pp and self.is_last_pp_rank:
             assert self.pp_handler is not None
             self.pp_handler.broadcast_drafts()
