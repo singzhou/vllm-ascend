@@ -70,7 +70,7 @@ def mega_chunk_gdn_prefill(
         rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
         stream = torch.npu.current_stream(v.device)
         tag = f"MegaChunkGdn rank={rank} device={v.device} layer={layer_name}"
-        logger.info(
+        logger.warning(
             "%s phase=wait_prior q=%s v=%s state=%s host_starts=%s num_matrices=%d",
             tag,
             tuple(q.shape),
@@ -81,7 +81,7 @@ def mega_chunk_gdn_prefill(
         )
         stream.synchronize()
         device_starts = tuple(cu_seqlens.cpu().tolist())
-        logger.info("%s phase=prepare_inputs device_starts=%s", tag, device_starts)
+        logger.warning("%s phase=prepare_inputs device_starts=%s", tag, device_starts)
         if device_starts != cu_seqlens_host:
             raise RuntimeError(f"{tag} sequence boundaries differ: host={cu_seqlens_host}, device={device_starts}")
 
@@ -100,10 +100,10 @@ def mega_chunk_gdn_prefill(
     )
     if stream is not None:
         stream.synchronize()
-        logger.info("%s phase=launch", tag)
+        logger.warning("%s phase=launch", tag)
     out, final_state = op(*args)
     if stream is not None:
-        logger.info("%s phase=wait_kernel", tag)
+        logger.warning("%s phase=wait_kernel", tag)
         stream.synchronize()
-        logger.info("%s phase=complete", tag)
+        logger.warning("%s phase=complete", tag)
     return out * (q.shape[-1] ** -0.5), final_state.transpose(-1, -2)
