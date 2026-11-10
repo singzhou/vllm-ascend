@@ -82,7 +82,7 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Emit per-layer KVPool ranged transfer audit events. Default: 0 (disabled).
     # Valid values: 0 or 1. This configuration is not sensitive.
     "VLLM_ASCEND_KVPOOL_RANGE_DEBUG": lambda: _strict_binary_env("VLLM_ASCEND_KVPOOL_RANGE_DEBUG"),
-    # Enable the external xLLM MegaChunkGdn prefill operator on Atlas A2.
+    # Enable the MegaChunkGdn prefill operator on Atlas A2.
     # Default: 0 (disabled). Valid values: 0 or 1. Not sensitive.
     "VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN": lambda: _strict_binary_env("VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN"),
     # Override the Unified Buffer (UB) size in KB for Triton kernel tile sizing.

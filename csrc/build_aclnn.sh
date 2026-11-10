@@ -17,8 +17,8 @@ setup_catlass_dependency() {
     catlass_commit=$(git config -f "${ROOT_DIR}/.gitmodules" --get submodule.csrc/third_party/catlass.commit)
     if [[ ! -d "${catlass_path}" ]]; then
         echo "dependency catlass is missing, try to fetch it..."
-        git submodule sync
-        if ! git submodule update --init --recursive; then
+        git -C "$ROOT_DIR" submodule sync -- csrc/third_party/catlass
+        if ! git -C "$ROOT_DIR" submodule update --init --recursive -- csrc/third_party/catlass; then
             log "fetch failed"
             exit 1
         fi
@@ -94,9 +94,13 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
     # ASCEND910B (A2) series
     # dependency: catlass
     setup_catlass_dependency
+    if [[ ! -f "${ROOT_DIR}/csrc/third_party/pto-isa/include/pto/pto-inst.hpp" ]]; then
+        git -C "$ROOT_DIR" submodule update --init -- csrc/third_party/pto-isa || exit 1
+    fi
 
     CUSTOM_OPS_ARRAY=(
         "chunk_gated_delta_rule_fwd_h_vllm"
+        "mega_chunk_gdn"
         "scatter_nd_update_sk"
         "grouped_matmul_swiglu_quant_weight_nz_tensor_list"
         "sparse_flash_attention"

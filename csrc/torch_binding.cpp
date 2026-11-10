@@ -57,6 +57,7 @@
 #include "attention/kda_layout_swap12/kda_layout_swap12_torch_adpt.h"
 #include "attention/legacy_recurrent_gated_delta_rule/legacy_recurrent_gated_delta_rule_torch_adpt.h"
 #include "attention/dcut_recurrent_gated_delta_rule/dcut_recurrent_gated_delta_rule_torch_adpt.h"
+#include "attention/mega_chunk_gdn/mega_chunk_gdn_torch_adpt.h"
 #include "attention/recurrent_gated_delta_rule_v310/recurrent_gated_delta_rule_310_torch_adpt.h"
 #include "attention/k2q_csr/k2q_csr_torch_adpt.h"
 #include "attention/msa_index_score/msa_index_score_torch_adpt.h"
@@ -2820,6 +2821,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "                                    bool zero_padded_output=False) -> Tensor");
     ops.impl("npu_dcut_recurrent_gated_delta_rule", torch::kPrivateUse1,
              &vllm_ascend::npu_dcut_recurrent_gated_delta_rule);
+
+    ops.def("npu_mega_chunk_gdn(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, "
+            "Tensor mask_lower, Tensor mask_full, Tensor minus_identity, Tensor cu_seqlens, "
+            "Tensor initial_state, int num_matrices) -> (Tensor, Tensor)");
+    ops.impl("npu_mega_chunk_gdn", torch::kPrivateUse1, &vllm_ascend::npu_mega_chunk_gdn);
 
 #ifdef VLLM_ENABLE_ATB_AND_DIRECT_KERNELS
     // Direct kernel custom ops

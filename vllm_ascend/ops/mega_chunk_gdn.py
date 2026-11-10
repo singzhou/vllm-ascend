@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from functools import cache, lru_cache
+from functools import cache
 
 import torch
 from vllm.logger import init_logger
 from vllm.third_party.flash_linear_attention.ops.l2norm import l2norm_fwd
+
+from vllm_ascend.utils import enable_custom_op
 
 logger = init_logger(__name__)
 
@@ -28,17 +30,14 @@ def supports_mega_chunk_gdn(q: torch.Tensor, v: torch.Tensor, cu_seqlens_host: t
     )
 
 
-@lru_cache(maxsize=1)
+@cache
 def _get_mega_chunk_gdn_op():
-    try:
-        from custom_ops_lib import mega_chunk_gdn
-    except ImportError as exc:
+    if not enable_custom_op() or not hasattr(torch.ops._C_ascend, "npu_mega_chunk_gdn"):
         raise RuntimeError(
-            "VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN=1 requires the xLLM custom_ops_lib "
-            "binding and the MegaChunkGdn Ascend910B operator package."
-        ) from exc
-    logger.info("Using xLLM MegaChunkGdn for supported GDN prefill batches.")
-    return mega_chunk_gdn
+            "VLLM_ASCEND_ENABLE_MEGA_CHUNK_GDN=1 requires vLLM Ascend custom operators built for Ascend910B."
+        )
+    logger.info("Using MegaChunkGdn for supported GDN prefill batches.")
+    return torch.ops._C_ascend.npu_mega_chunk_gdn
 
 
 @cache
@@ -64,7 +63,7 @@ def mega_chunk_gdn_prefill(
     )
     # The cache uses [V, K] while the xLLM kernel consumes and returns [K, V].
     state = initial_state.transpose(-1, -2).to(v.dtype).contiguous()
-    out, *_, final_state = op(
+    out, final_state = op(
         l2norm_fwd(q.contiguous()).contiguous(),
         l2norm_fwd(k.contiguous()).contiguous(),
         v.contiguous(),
@@ -74,6 +73,5 @@ def mega_chunk_gdn_prefill(
         cu_seqlens.to(torch.int32).contiguous(),
         state,
         num_chunks * num_value_heads,
-        True,
     )
-    return out * (q.shape[-1] ** -0.5), final_state.view_as(state).transpose(-1, -2)
+    return out * (q.shape[-1] ** -0.5), final_state.transpose(-1, -2)

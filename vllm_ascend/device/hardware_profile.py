@@ -92,7 +92,7 @@ class HardwareCapability(Enum):
     DYNAMIC_MX_QUANT_SCALE_ALG_ONE = auto()
     # Allow GDN prefill to use the external FLA NPU fused operator.
     FLA_GDN_PREFILL = auto()
-    # Allow GDN prefill to use the optional xLLM Ascend910B MegaChunkGdn package.
+    # Allow GDN prefill to use the MegaChunkGdn Ascend910B custom operator.
     MEGA_CHUNK_GDN_PREFILL = auto()
     # Enable the FP8/C8 attention KV-cache ABI and matching attention preprocess paths.
     # This is not a general statement that every FP8 operation is supported.

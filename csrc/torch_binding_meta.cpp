@@ -782,6 +782,15 @@ at::Tensor npu_dcut_recurrent_gated_delta_rule_meta(
     return at::empty_symint(value.sym_sizes(), options);
 }
 
+std::tuple<at::Tensor, at::Tensor> npu_mega_chunk_gdn_meta(
+    const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
+    const at::Tensor& g, const at::Tensor& beta, const at::Tensor& mask_lower,
+    const at::Tensor& mask_full, const at::Tensor& minus_identity,
+    const at::Tensor& cu_seqlens, const at::Tensor& initial_state, int64_t num_matrices)
+{
+    return {at::empty_like(v), at::empty_symint(initial_state.sym_sizes(), v.options())};
+}
+
 std::tuple<at::Tensor, at::Tensor, at::Tensor> moe_gating_top_k_hash_meta(
     const at::Tensor& x,
     int64_t k,
@@ -1878,6 +1887,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_recurrent_gated_delta_rule", &vllm_ascend::meta::npu_recurrent_gated_delta_rule_meta);
     ops.impl("npu_dcut_recurrent_gated_delta_rule",
              &vllm_ascend::meta::npu_dcut_recurrent_gated_delta_rule_meta);
+    ops.impl("npu_mega_chunk_gdn", &vllm_ascend::meta::npu_mega_chunk_gdn_meta);
     // Launch host print from device
     ops.impl("device_print", &vllm_ascend::meta::device_print_meta);
     // launch host print from device for tensors
