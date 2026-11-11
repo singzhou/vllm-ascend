@@ -86,7 +86,9 @@ def fused_gdn_state_indices(
     return output
 
 
-@triton.jit
+# Adaptive verification changes these counts every step. Specializing them
+# compiles a new metadata kernel for each budget on the decode critical path.
+@triton.jit(do_not_specialize=["NUM_ACTIVE", "NUM_TOKENS"])
 def _gdn_spec_metadata_kernel(
     block_table,
     seq_lens,
@@ -103,10 +105,10 @@ def _gdn_spec_metadata_kernel(
     SEQ_STRIDE: tl.constexpr,
     QUERY_STRIDE: tl.constexpr,
     ACCEPTED_STRIDE: tl.constexpr,
-    NUM_ACTIVE: tl.constexpr,
+    NUM_ACTIVE,
     NUM_ROWS: tl.constexpr,
     NUM_SLOTS: tl.constexpr,
-    NUM_TOKENS: tl.constexpr,
+    NUM_TOKENS,
     MAMBA_BLOCK_SIZE: tl.constexpr,
     PAD_SLOT_ID: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -122,7 +124,7 @@ def _gdn_spec_metadata_kernel(
             rows < NUM_ACTIVE,
             PAD_SLOT_ID,
         )
-        accepted = tl.load(accepted_tokens + offsets * ACCEPTED_STRIDE, offsets < NUM_ACTIVE, 1)
+        accepted = tl.load(accepted_tokens + offsets * ACCEPTED_STRIDE, offsets < NUM_ACTIVE, 1).to(tl.int32)
     else:
         states = tl.full((BLOCK_SIZE,), PAD_SLOT_ID, tl.int32)
         accepted = tl.full((BLOCK_SIZE,), 1, tl.int32)
