@@ -8,6 +8,7 @@ import pytest
 import torch
 from vllm.v1.attention.backends.utils import NULL_BLOCK_ID
 
+from vllm_ascend.ops.triton.mamba import gdn_state_indices as gdn_metadata_module
 from vllm_ascend.ops.triton.mamba.gdn_state_indices import fused_gdn_spec_metadata, fused_gdn_state_indices
 from vllm_ascend.ops.triton.mamba.state_index import (
     STATE_IO_BLOCK_SIZE,
@@ -127,6 +128,63 @@ def test_fused_gdn_spec_metadata(live, graph_rows, slots, strided, input_dtype):
             query_cpu[1:] = query_lengths.flip(0).cumsum(0)
             query.copy_(query_cpu)
             table.add_(1)
+
+
+@pytest.mark.parametrize("input_dtype", [torch.int32, torch.int64])
+def test_fused_gdn_spec_metadata_reuses_kernel_for_dynamic_budgets(monkeypatch, input_dtype):
+    """New AV budgets must update metadata without compiling another kernel."""
+    graph_rows, slots, columns = 32, 8, 44
+    capacity = graph_rows * slots
+    table_cpu = torch.arange(graph_rows * columns, dtype=torch.int32).view(graph_rows, columns)
+    table = table_cpu.to("npu")
+    seq = torch.full((graph_rows,), 65, dtype=torch.int32, device="npu")
+    query = torch.empty(graph_rows + 1, dtype=input_dtype, device="npu")
+    accepted = torch.ones(graph_rows, dtype=input_dtype, device="npu")
+    outputs = (
+        torch.empty((graph_rows, slots), dtype=torch.int32, device="npu"),
+        torch.empty(graph_rows + 1, dtype=torch.int32, device="npu"),
+        torch.empty(graph_rows, dtype=torch.int32, device="npu"),
+        torch.empty(graph_rows, dtype=torch.bool, device="npu"),
+        torch.empty(graph_rows + 1, dtype=torch.int32, device="npu"),
+        torch.empty(capacity, dtype=torch.int32, device="npu"),
+    )
+    kernel = gdn_metadata_module._gdn_spec_metadata_kernel
+    hashes = []
+
+    class RecordKernel:
+        def __getitem__(self, grid):
+            def run(*args, **kwargs):
+                compiled = kernel[grid](*args, **kwargs)
+                hashes.append(compiled.hash)
+                return compiled
+
+            return run
+
+    monkeypatch.setattr(gdn_metadata_module, "_gdn_spec_metadata_kernel", RecordKernel())
+    # Include zero/one and aligned/unaligned counts: Triton otherwise also
+    # specializes runtime integers on equality and alignment.
+    for live, width in ((32, 8), (17, 3), (16, 1), (1, 7), (0, 0), (8, 2), (32, 5)):
+        tokens = live * width
+        boundaries = torch.arange(graph_rows + 1, dtype=torch.int32).clamp(max=live) * width
+        query.copy_(boundaries)
+        outputs[-1].fill_(-1)
+        fused_gdn_spec_metadata(table, seq, query, accepted, outputs, live, tokens, 64, NULL_BLOCK_ID)
+        states = torch.full((graph_rows, slots), NULL_BLOCK_ID, dtype=torch.int32)
+        states[:live] = table_cpu[:live, 1 : slots + 1]
+        token_indices = torch.full((capacity,), -1, dtype=torch.int32)
+        token_indices[:tokens] = torch.arange(tokens, dtype=torch.int32)
+        expected = (
+            states,
+            boundaries,
+            torch.ones(graph_rows, dtype=torch.int32),
+            torch.arange(graph_rows) < live,
+            torch.cat((boundaries[:1], torch.diff(boundaries))),
+            token_indices,
+        )
+        for actual, reference in zip(outputs, expected):
+            torch.testing.assert_close(actual.cpu(), reference, rtol=0, atol=0)
+
+    assert len(set(hashes)) == 1, "Each new AV batch size/budget must reuse the compiled metadata kernel"
 
 
 @pytest.mark.parametrize("adaptive", [False, True])
