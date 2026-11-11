@@ -32,6 +32,7 @@ from vllm.platforms import Platform, PlatformEnum
 os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
 from vllm_ascend.ascend_config import KVPPConfig, get_ascend_config, init_ascend_config
+from vllm_ascend.core.opd_trace_config import validate_opd_scheduler
 from vllm_ascend.device.hardware_profile import (
     AttentionBackendFamily,
     HardwareCapability,
@@ -548,6 +549,7 @@ class NPUPlatform(Platform):
             logger.warning("Model config is missing. Skipping Ascend-specific config updates.")
             return
 
+        requested_scheduler = vllm_config.scheduler_config.scheduler_cls
         _validate_model_runner_config(vllm_config)
         cls._validate_indexer_pp_config(vllm_config)
 
@@ -588,6 +590,7 @@ class NPUPlatform(Platform):
 
         # 8.Setup worker class, custom ops and scheduler (ascend_config -> vllm_config).
         _setup_worker_and_scheduler(vllm_config, ascend_config)
+        validate_opd_scheduler(requested_scheduler, vllm_config.scheduler_config.scheduler_cls)
 
         # 9.Validate SFA / DCP / KV and SP consistency (vllm_config)
         _validate_sfa_dcp_kv_sp(vllm_config)

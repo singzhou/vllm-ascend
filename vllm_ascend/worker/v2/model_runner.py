@@ -53,6 +53,7 @@ from vllm.v1.worker.gpu.model_runner import (
 from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
 
 import vllm_ascend.envs as envs_ascend
+from vllm_ascend.core.opd_trace_config import is_opd_scheduler
 from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.ascend_forward_context import (
     MoECommType,
@@ -155,10 +156,7 @@ class NPUModelRunner(GPUModelRunner):
         self._trace_opd_widths = bool(
             vllm_config.speculative_config
             and vllm_config.speculative_config.enable_adaptive_verification
-            and vllm_config.scheduler_config.scheduler_cls in (
-                "vllm_ascend.core.opd_trace.OPDTraceScheduler",
-                "vllm_ascend.core.opd_trace.OPDTraceAsyncScheduler",
-            )
+            and is_opd_scheduler(vllm_config.scheduler_config.scheduler_cls)
         )
         self._skip_spec_cpu_length_sync = False
         # Ascend-specific configurations
@@ -395,17 +393,14 @@ class NPUModelRunner(GPUModelRunner):
         if pcp_manager is not None and isinstance(pcp_manager, AscendPCPManager):
             pcp_manager._sampling_hidden_restored = False
         self._restore_replicated_draft_target_states()
-        widths = None
         if self._trace_opd_widths and self.execute_model_state is not None and self.is_last_pp_rank:
-            from vllm_ascend.core.opd_trace import effective_draft_widths
+            from vllm_ascend.core.opd_trace import sample_with_verified_widths
 
-            # Under adaptive verification the CPU array is only an upper bound.
-            # Snapshot the device boundaries used by the sampler before reuse.
-            widths = effective_draft_widths(self.execute_model_state.input_batch)
-        output = super().sample_tokens(grammar_output)
-        if widths is not None and output is not None:
-            runner_output = getattr(output, "model_runner_output", output)
-            runner_output.opd_verify_widths = widths
+            output = sample_with_verified_widths(
+                self.execute_model_state.input_batch, super().sample_tokens, grammar_output
+            )
+        else:
+            output = super().sample_tokens(grammar_output)
         if self.use_spec_pp and self.is_last_pp_rank:
             assert self.pp_handler is not None
             self.pp_handler.broadcast_drafts()

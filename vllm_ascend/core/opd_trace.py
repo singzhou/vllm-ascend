@@ -3,28 +3,37 @@
 
 import hashlib
 import json
+import logging
 import os
 
 from vllm.logger import init_logger
 from vllm.v1.core.sched.async_scheduler import AsyncScheduler
 from vllm.v1.core.sched.scheduler import Scheduler
 
+from vllm_ascend.core.opd_draft_digest import safetensors_digest
+
 logger = init_logger(__name__)
 
 
-def effective_draft_widths(batch):
-    """Read the final sampler boundaries, subtracting DSpark's one target row."""
+def sample_with_verified_widths(batch, sample_tokens, grammar_output):
+    """Snapshot device boundaries before the sampler can reuse the input batch."""
     offsets = batch.cu_num_logits[: len(batch.req_ids) + 1].tolist()
-    return {rid: end - start - 1 for rid, start, end in zip(batch.req_ids, offsets, offsets[1:])}
+    widths = {rid: end - start - 1 for rid, start, end in zip(batch.req_ids, offsets, offsets[1:])}
+    output = sample_tokens(grammar_output)
+    if output is not None:
+        getattr(output, "model_runner_output", output).opd_verify_widths = widths
+    return output
 
 
 class _OPDTrace:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._draft_revision = os.environ["SPECFORGE_OPD_DRAFT_REVISION"]
+        self._draft_revision = os.environ.get("SPECFORGE_OPD_DRAFT_REVISION", "").strip()
         spec = self.vllm_config.speculative_config
         if not self._draft_revision or self.spec_decode_metrics_level != "detailed":
-            raise ValueError("OPD trace requires a draft revision and detailed per-request metrics")
+            raise ValueError("OPD trace requires SPECFORGE_OPD_DRAFT_REVISION and detailed per-request metrics")
+        if not logger.isEnabledFor(logging.INFO):
+            raise ValueError("OPD trace needs INFO output; check VLLM_LOGGING_LEVEL and the trace logger")
         if spec is None or spec.method != "dspark" or spec.num_speculative_tokens != 7:
             raise ValueError("OPD trace expects DSpark with seven proposals")
         if bool(self.scheduler_config.async_scheduling) != isinstance(self, OPDTraceAsyncScheduler):
@@ -40,6 +49,10 @@ class _OPDTrace:
             if get_ascend_config().dynamic_spec_config.method == "dspark":
                 raise ValueError("V1 async dynamic verification has no reliable OPD width telemetry")
         self._sample_from_anchor = getattr(spec.draft_model_config.hf_config, "sample_from_anchor", True)
+        load_config = spec.draft_load_config or self.vllm_config.load_config
+        if load_config.load_format not in {"auto", "hf", "safetensors", "fastsafetensors", "instanttensor"}:
+            raise ValueError(f"OPD draft fingerprint needs a safetensors loader, got {load_config.load_format!r}")
+        self._draft_weights_sha256 = safetensors_digest(spec.draft_model_config.model)
 
     def update_from_output(self, scheduler_output, model_runner_output):
         pending = []
@@ -76,8 +89,15 @@ class _OPDTrace:
                 "invalid": (scheduler_output.num_invalid_spec_tokens or {}).get(req.request_id, 0),
                 "preemptions": req.num_preemptions,
                 "stopped": req.is_finished(),
+                "stopped_on_eos": (
+                    req.is_finished()
+                    and req.status.name == "FINISHED_STOPPED"
+                    and req.stop_reason is None
+                    and ids[-1] == req.sampling_params.eos_token_id
+                ),
             }
             if offset == 0:
+                event["draft_weights_sha256"] = self._draft_weights_sha256
                 prompt = json.dumps(req.prompt_token_ids, separators=(",", ":")).encode()
                 event["prompt_digest"] = hashlib.sha256(prompt).hexdigest()
             logger.info("DSPARK_OPD %s", json.dumps(event, separators=(",", ":")))
