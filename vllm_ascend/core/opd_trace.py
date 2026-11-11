@@ -49,7 +49,11 @@ class _OPDTrace:
             if get_ascend_config().dynamic_spec_config.method == "dspark":
                 raise ValueError("V1 async dynamic verification has no reliable OPD width telemetry")
         self._sample_from_anchor = getattr(spec.draft_model_config.hf_config, "sample_from_anchor", True)
-        load_config = spec.draft_load_config or self.vllm_config.load_config
+        # v0.30 V2 DSpark constructs the loader from the global load config.
+        # Only the V1 proposer passes the per-draft override to get_model().
+        load_config = self.vllm_config.load_config
+        if not self.vllm_config.use_v2_model_runner and spec.draft_load_config is not None:
+            load_config = spec.draft_load_config
         if load_config.load_format not in {"auto", "hf", "safetensors", "fastsafetensors", "instanttensor"}:
             raise ValueError(f"OPD draft fingerprint needs a safetensors loader, got {load_config.load_format!r}")
         self._draft_weights_sha256 = safetensors_digest(spec.draft_model_config.model)

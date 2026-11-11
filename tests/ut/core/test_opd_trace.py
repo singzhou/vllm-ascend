@@ -19,11 +19,11 @@ class SchedulerDouble:
         self.requests = {request.request_id: request}
         self.spec_decode_metrics_level = "detailed"
         self.vllm_config = SimpleNamespace(
-            use_v2_model_runner=True,
-            load_config=SimpleNamespace(load_format="auto"),
+            use_v2_model_runner=getattr(request, "v2", True),
+            load_config=SimpleNamespace(load_format=getattr(request, "load_format", "auto")),
             speculative_config=SimpleNamespace(
                 method="dspark",
-                draft_load_config=None,
+                draft_load_config=getattr(request, "draft_load_config", None),
                 num_speculative_tokens=7,
                 enable_adaptive_verification=False,
                 draft_model_config=SimpleNamespace(
@@ -104,6 +104,16 @@ def test_trace_sees_filtered_commits(trace, scheduler_name, monkeypatch, caplog,
             cls(req)
         monkeypatch.setenv("SPECFORGE_OPD_DRAFT_REVISION", "my-draft")
         scheduler = cls(req)
+        if scheduler_name == "OPDTraceScheduler":
+            for req.v2 in (True, False):
+                for global_format, draft_format in (("dummy", "safetensors"), ("safetensors", "dummy")):
+                    req.load_format = global_format
+                    req.draft_load_config = SimpleNamespace(load_format=draft_format)
+                    if (global_format if req.v2 else draft_format) == "dummy":
+                        with pytest.raises(ValueError, match="safetensors loader"):
+                            cls(req)
+                    else:
+                        cls(req)
     sched = SimpleNamespace(num_scheduled_tokens={"internal-17": 1}, num_invalid_spec_tokens=None)
     with caplog.at_level(logging.INFO):
         for update in [([3], None, False), ([1, 2], (7, 1), False), ([6], None, False), ([8], (7, 3), True)]:
