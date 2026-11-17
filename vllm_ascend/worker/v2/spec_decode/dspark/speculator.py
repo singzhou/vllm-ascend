@@ -39,6 +39,12 @@ from vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.dspark_context impor
     DSparkContextChunk,
     initialize_draft_context_chunk,
 )
+from vllm_ascend.ops.triton.v2.sample.categorical_sample import categorical_sample
+from vllm_ascend.ops.triton.v2.spec_decode.expand_draft_logits import (
+    expand_draft_logits_,
+    make_draft_vocab_block_starts,
+    make_target_to_draft_map,
+)
 from vllm_ascend.spec_decode.vocab_mapping import settle_reduced_vocab_lm_head
 from vllm_ascend.utils import lmhead_tp_enable, lmhead_tp_max_num_logits
 from vllm_ascend.worker.dcp_utils import DCPManager
@@ -72,6 +78,8 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         self.input_batch: InputBatch | None = None
         self.attn_architecture: str | None = None
         self._draft_mla_uses_device_lengths = False
+        self._target_to_draft_map: torch.Tensor | None = None
+        self._draft_vocab_block_starts: torch.Tensor | None = None
         self._init_dcp()
 
     def _init_dcp(self) -> None:
@@ -89,6 +97,43 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
             use_async_scheduling=self.vllm_config.scheduler_config.async_scheduling,
         )
 
+    def _sample_logits(
+        self,
+        logits: torch.Tensor,
+        idx_map: torch.Tensor,
+        sample_pos: torch.Tensor,
+        step: int,
+    ) -> torch.Tensor:
+        if self.draft_logits is None or self._d2t_scatter_index is None:
+            return super()._sample_logits(logits, idx_map, sample_pos, step)
+
+        # Predict acceptance in draft-vocabulary space, as upstream does.
+        self._maybe_predict_acceptance(logits, idx_map, self._step_cols[step])
+        assert self._draft_scatter_buf is not None
+        assert self._target_to_draft_map is not None
+        logits = expand_draft_logits_(
+            self._draft_scatter_buf[: logits.shape[0]],
+            self._target_to_draft_map,
+            logits,
+            getattr(self, "_draft_vocab_block_starts", None),
+        )
+
+        sampled = categorical_sample(
+            logits,
+            idx_map,
+            self.temperature,
+            self.seeds,
+            sample_pos - 1,
+            apply_temperature=True,
+            is_drafting=True,
+            logits_cache=self.draft_logits,
+            logits_cache_col=self._step_cols[step],
+            use_fp64=self.use_fp64_gumbel,
+        )
+        if self.draft_watermarker is not None:
+            sampled = self.draft_watermarker.sample(logits, sampled, idx_map, self.temperature)
+        return sampled
+
     def load_draft_model(
         self,
         target_model: torch.nn.Module,
@@ -103,6 +148,9 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
 
         if getattr(model, "draft_id_to_target_id", None) is not None:
             settle_reduced_vocab_lm_head(model, target_model, self.vllm_config.model_config.get_vocab_size())
+        if getattr(self, "_d2t_scatter_index", None) is not None:
+            self._target_to_draft_map = make_target_to_draft_map(self._d2t_scatter_index, self.vocab_size)
+            self._draft_vocab_block_starts = make_draft_vocab_block_starts(self._d2t_scatter_index, self.vocab_size)
         self._lmhead_tp_wrap_draft_logits(model)
 
         return model
