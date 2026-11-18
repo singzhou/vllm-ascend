@@ -51,6 +51,19 @@ _GDN_CUMSUM_WORKING_SET = 2**18
 _GDN_GRAPH_DUMMY_ACCEPTED_TOKEN_COUNT = 1
 
 
+def _has_shortened_spec_queries(
+    query_start_loc_cpu: torch.Tensor,
+    num_decode_draft_tokens_cpu: torch.Tensor | None,
+    num_spec: int,
+) -> bool:
+    """Detect real speculative rows whose queries no longer fill the state table."""
+    if num_decode_draft_tokens_cpu is None:
+        return False
+    query_lens = torch.diff(query_start_loc_cpu)
+    spec_rows = num_decode_draft_tokens_cpu[: query_lens.numel()] >= 0
+    return bool(torch.any(spec_rows & (query_lens > 0) & (query_lens < num_spec + 1)))
+
+
 def _stable_argsort_for_npu(tensor: torch.Tensor) -> torch.Tensor:
     """Stable argsort with a sort key AiCore can actually take.
 
@@ -874,7 +887,11 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
             num_reqs = num_decode_draft_tokens_cpu.numel()
             spec_sequence_masks_cpu = self.spec_sequence_masks_cpu[:num_reqs]
             runtime_draft_tokens = num_decode_draft_tokens_cpu[num_decode_draft_tokens_cpu >= 0]
-            if runtime_draft_tokens.sum().item() > 0 or getattr(self, "adaptive_verification_enabled", False):
+            if (
+                runtime_draft_tokens.sum().item() > 0
+                or getattr(self, "adaptive_verification_enabled", False)
+                or _has_shortened_spec_queries(query_start_loc_cpu, num_decode_draft_tokens_cpu, self.num_spec)
+            ):
                 torch.ge(
                     num_decode_draft_tokens_cpu,
                     0,
@@ -1328,7 +1345,9 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
             actual_seq_lengths=lengths,
         )
         metadata.non_spec_prefill_metadata = metadata.non_spec_decode_metadata = None
-        metadata.use_dcut_varlen = getattr(self, "adaptive_verification_enabled", False)
+        metadata.use_dcut_varlen = getattr(self, "adaptive_verification_enabled", False) or _has_shortened_spec_queries(
+            m.query_start_loc_cpu, num_decode_draft_tokens_cpu, self.num_spec
+        )
         return metadata
 
     def build(  # type: ignore[override]
@@ -1473,7 +1492,12 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
         self._attach_non_spec_prefill_metadata(
             attn_metadata, non_spec_chunked_prefill_metadata, non_spec_conv1d_cache_indices
         )
-        attn_metadata.use_dcut_varlen = getattr(self, "adaptive_verification_enabled", False)
+        # Previous accepted counts select historical state slots independently
+        # of this round's query length. FLA/legacy flatten that table to the
+        # current length, so shortened verification must retain DCUT's 2D table.
+        attn_metadata.use_dcut_varlen = getattr(
+            self, "adaptive_verification_enabled", False
+        ) or _has_shortened_spec_queries(m.query_start_loc_cpu, num_decode_draft_tokens_cpu, self.num_spec)
         self._attach_spec_decode_metadata(attn_metadata)
         self._attach_non_spec_decode_metadata(attn_metadata, non_spec_conv1d_cache_indices)
         return attn_metadata

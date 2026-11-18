@@ -513,7 +513,6 @@ class AscendStep3p5MTPProposer(AscendEagleProposer):
     ) -> torch.Tensor:
         """Base MTP execution flow with Step3.5 step-aware layer/head selection."""
         self._last_draft_probs = None
-        # sampling_metadata fallback is handled by the parent class.
         model_input_ids = self.input_ids[:num_input_tokens]
         model_positions = self._get_positions(num_input_tokens)
         model_kwargs = {

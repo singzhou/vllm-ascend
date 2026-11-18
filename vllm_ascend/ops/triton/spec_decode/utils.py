@@ -195,9 +195,9 @@ def copy_and_expand_dflash_and_dspark_inputs_kernel(
 
         if SAMPLE_FROM_ANCHOR:
             sample_out_idx = req_idx * num_speculative_tokens + q_idx
-            tl.store(out_token_indices_ptr + sample_out_idx, offs, mask=mask)
+            tl.store(out_token_indices_ptr + sample_out_idx, offs, mask=mask & (q_idx < num_speculative_tokens))
         else:
-            sample_mask = mask & (q_idx > 0)
+            sample_mask = mask & (q_idx > 0) & (q_idx <= num_speculative_tokens)
             sample_out_idx = req_idx * num_speculative_tokens + (q_idx - 1)
             tl.store(out_token_indices_ptr + sample_out_idx, offs, mask=sample_mask)
 

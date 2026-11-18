@@ -1034,6 +1034,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         num_scheduled_tokens: int = 0,
         num_rejected_tokens_gpu: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        self._last_draft_probs = None
         batch_size = common_attn_metadata.batch_size()
 
         # Dynamic SD: take the scheduled per-step K as an explicit argument and
@@ -1044,12 +1045,16 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         # configured maximum, so pre-allocated buffers stay valid; K == 0 is
         # handled just below.
         self.num_speculative_tokens = num_speculative_tokens
+        if self.method == "dspark":
+            self.num_query_per_req = num_speculative_tokens + (not self.sample_from_anchor)
 
         # Dynamic SD may schedule K == 0 draft tokens for the current batch
         # size. Return an empty [batch_size, 0] draft so downstream copy/unpack
         # paths (which key off ``draft_token_ids.shape[1]``) stay consistent.
         # Mirrors vLLM's llm_base_proposer._propose empty-draft early return.
         if self.num_speculative_tokens == 0:
+            if self.method == "dspark" and self.dynamic_spec is not None:
+                self.dynamic_spec.num_verify_tokens = None
             return torch.empty(
                 batch_size,
                 0,
@@ -1423,6 +1428,43 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
 
         return super()._sample_from_logits(logits, sampling_metadata)
 
+    def _sample_dspark_draft_from_logits(
+        self,
+        logits: torch.Tensor,
+        sampling_metadata: SamplingMetadata | None,
+        probs_out: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Sample DSpark tokens and export probabilities in the target vocabulary."""
+        d2t = getattr(self.model, "draft_id_to_target_id", None)
+        target_vocab_size = self.vllm_config.model_config.get_vocab_size()
+        if d2t is None:
+            # Some draft heads include extra/padded columns. They are not
+            # target tokens and must not participate in sampling or argmax.
+            logits = logits[:, :target_vocab_size]
+        if not self._enable_probabilistic_draft_probs or sampling_metadata is None or sampling_metadata.all_greedy:
+            token_ids, _ = self._sample_draft_from_logits(logits, sampling_metadata)
+            if d2t is not None:
+                token_ids = self.model.map_draft_to_target(token_ids)
+            # Upstream may return raw logits for an all-greedy batch. These
+            # are not probabilities and may still have the reduced vocab width.
+            return token_ids, None
+
+        token_ids, probs = self._sample_draft_from_logits(logits, sampling_metadata)
+        if d2t is not None:
+            # Sampling only applies temperature, so sample in the small vocab
+            # and scatter q afterwards. Avoid target-sized logits/noise buffers.
+            token_ids = self.model.map_draft_to_target(token_ids)
+            target_ids = torch.arange(d2t.shape[0], device=logits.device) + d2t
+            target_probs = (
+                probs.new_zeros((logits.shape[0], target_vocab_size)) if probs_out is None else probs_out.zero_()
+            )
+            target_probs.index_copy_(1, target_ids, probs)
+            probs = target_probs
+        elif probs_out is not None:
+            probs_out.copy_(probs)
+            probs = probs_out
+        return token_ids, probs
+
     def compute_draft_token_ids(
         self,
         hidden_states: torch.Tensor,
@@ -1432,10 +1474,14 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
 
         Returns (draft_token_ids, draft_probs) where draft_probs is None when
         probabilistic sampling is disabled, all-greedy, or vocab remapping
-        prevents lossless probability export.
+        prevents lossless probability export for a non-DSpark model.
         """
         if self.method in ("eagle3", "dflash", "dspark"):
             logits = self.model.logits_processor(self.model.lm_head, hidden_states)
+            if self.method == "dspark" and self._enable_probabilistic_draft_probs:
+                return self._sample_dspark_draft_from_logits(logits, sampling_metadata)
+            if self.method == "dspark" and getattr(self.model, "draft_id_to_target_id", None) is None:
+                logits = logits[:, : self.vllm_config.model_config.get_vocab_size()]
             if not hasattr(self.model, "draft_id_to_target_id") or self.model.draft_id_to_target_id is None:
                 return self._sample_draft_from_logits(logits, sampling_metadata)
             # With vocab remapping, draft probs live in draft-vocab space and
@@ -1465,11 +1511,8 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
     ) -> torch.Tensor:
         # Reset cached draft probs from the previous propose call.
         self._last_draft_probs = None
-        # Fallback for dummy_run / profile run where sampling_metadata is not
-        # passed explicitly. In probabilistic mode this triggers a warning in
-        # _sample_draft_from_logits and falls back to greedy argmax.
-        if sampling_metadata is None and self.runner is not None:
-            sampling_metadata = self.runner.input_batch.sampling_metadata
+        # Real calls pass sampling_metadata explicitly. A DP dummy can have a
+        # different request count, so None must remain a greedy/no-q path.
         # The lifecycle of `input_ids`, `positions`, `hidden_states` runs through all
         # speculative tokens' proposings. `model_input_ids`, `model_positions` and
         # `model_hidden_states` represent the speculative model inputs.
@@ -1554,22 +1597,6 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
 
                 # `sample_hidden_states` has been all-gathered to full.
                 # `markov_emb` should also be full to match it.
-                # When the draft model has a reduced vocab (draft_id_to_target_id),
-                # draft logits/probs live in draft-vocab space and cannot be used
-                # directly for target-space rejection sampling. The upstream
-                # compute_draft_token_ids guard falls back to greedy in this case;
-                # mirror that here since this autoregressive loop bypasses it.
-                # implement d2t scatter (like upstream speculator) to enable
-                # probabilistic sampling with vocab remapping.
-                dspark_has_vocab_mapping = getattr(self.model, "draft_id_to_target_id", None) is not None
-                use_probabilistic = self._enable_probabilistic_draft_probs and not dspark_has_vocab_mapping
-                if self._enable_probabilistic_draft_probs and dspark_has_vocab_mapping:
-                    logger.warning_once(
-                        "draft_sample_method='probabilistic' is disabled for dspark "
-                        "with vocab remapping (draft_id_to_target_id): draft probs "
-                        "are in draft-vocab space and incompatible with target-space "
-                        "rejection sampling. Falling back to greedy."
-                    )
                 # Reduced-vocab drafters (e.g. Qwen3DSparkForCausalLM) must
                 # compute logits in draft-vocab space so that the Markov bias
                 # (draft_vocab_size) can be added; sampled draft ids are then
@@ -1580,30 +1607,25 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                     raw_logits = raw_logits[:num_indices]
                 logits = raw_logits.view(-1, self.num_speculative_tokens, raw_logits.shape[-1])
                 num_blk = logits.shape[0]
-                draft_token_ids = self._dspark_draft_buffer[:num_blk]
+                draft_token_ids = self._dspark_draft_buffer[:num_blk, : self.num_speculative_tokens + 1]
                 draft_token_ids[:, 0].copy_(self._dspark_seed_buffer[:num_blk])
-                dspark_probs_list: list[torch.Tensor] = []
+                dspark_probs = None
                 for idx in range(self.num_speculative_tokens):
                     markov_emb = self.model.markov_embed(draft_token_ids[:, idx])
                     logits_bias = self.model.markov_bias(markov_emb)
                     logits[:, idx].add_(logits_bias)
-                    if use_probabilistic:
-                        # Use probabilistic sampling instead of argmax.
-                        # logits[:, idx] is [num_blk, V], matching
-                        # batch_size for per-request temperature.
-                        token_ids, probs = self._sample_draft_from_logits(logits[:, idx], sampling_metadata)
-                        draft_token_ids[:, idx + 1].copy_(token_ids)
-                        if probs is not None:
-                            dspark_probs_list.append(probs)
-                    else:
-                        next_token_ids = logits[:, idx].argmax(dim=-1)
-                        if dspark_has_vocab_mapping:
-                            next_token_ids = self.model.map_draft_to_target(next_token_ids)
-                        draft_token_ids[:, idx + 1].copy_(next_token_ids)
-                if use_probabilistic and dspark_probs_list:
-                    # Stack [K x [num_blk, V]] -> [num_blk, K, V] ->
-                    # [num_blk * K, V] to match early_exit view logic.
-                    draft_probs_step0 = torch.stack(dspark_probs_list, dim=1).view(-1, logits.shape[-1]).contiguous()
+                    token_ids, probs = self._sample_dspark_draft_from_logits(
+                        logits[:, idx],
+                        sampling_metadata,
+                        probs_out=dspark_probs[:, idx] if dspark_probs is not None else None,
+                    )
+                    draft_token_ids[:, idx + 1].copy_(token_ids)
+                    if probs is not None:
+                        if dspark_probs is None:
+                            dspark_probs = probs.new_empty((num_blk, self.num_speculative_tokens, probs.shape[-1]))
+                            dspark_probs[:, idx].copy_(probs)
+                if dspark_probs is not None:
+                    draft_probs_step0 = dspark_probs.flatten(0, 1)
 
                 # Dynamic verify-length path, implemented in DynamicSpecScheduler
                 # Only the dspark method is handled here since it relies on
@@ -1611,7 +1633,7 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 if self.dynamic_spec is not None:
                     self.dynamic_spec.update(
                         model=self.model,
-                        last_hidden_states=last_hidden_states,
+                        last_hidden_states=sample_hidden_states[:num_indices],
                         draft_token_ids=draft_token_ids,
                         num_reqs=num_blk,
                     )
