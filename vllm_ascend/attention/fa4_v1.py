@@ -43,6 +43,7 @@ from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import attention_transfer_window
 
 _FA4_META_CACHE_ATTR = "_ascend_fa4_meta_cache"
+_FA4_PAGE_TABLE_CACHE_ATTR = "_ascend_fa4_page_table_cache"
 _FA4_ENABLED = envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK == 2
 
 
@@ -106,7 +107,11 @@ def _build_fa4_seq_tensors(num_tokens: int, seq_lens: torch.Tensor) -> tuple[tor
 
 
 def _fa4_cache_views(
-    key: torch.Tensor, value: torch.Tensor, block_table: torch.Tensor
+    key: torch.Tensor,
+    value: torch.Tensor,
+    block_table: torch.Tensor,
+    *,
+    forward_context: object | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Encode block strides as virtual FA4 page IDs without moving shared KV.
 
@@ -139,7 +144,19 @@ def _fa4_cache_views(
     # Each view ends at the last logical page, staying inside its raw storage.
     shape = ((num_blocks - 1) * stride_factor + 1, block_size, num_heads, head_size)
     strides = (page_elements, *inner_strides)
-    return key.as_strided(shape, strides), value.as_strided(shape, strides), (block_table * stride_factor).contiguous()
+    if forward_context is None:
+        virtual_page_table = (block_table * stride_factor).contiguous()
+    else:
+        # Layers can share page IDs while keeping separate K/V allocations.
+        page_tables = getattr(forward_context, _FA4_PAGE_TABLE_CACHE_ATTR, None)
+        if page_tables is None:
+            page_tables = {}
+            setattr(forward_context, _FA4_PAGE_TABLE_CACHE_ATTR, page_tables)
+        table_key = (block_table.data_ptr(), block_table.shape, block_table.stride(), stride_factor)
+        if table_key not in page_tables:
+            page_tables[table_key] = (block_table * stride_factor).contiguous()
+        virtual_page_table = page_tables[table_key]
+    return key.as_strided(shape, strides), value.as_strided(shape, strides), virtual_page_table
 
 
 class AscendFA4MetadataBuilder(AscendAttentionMetadataBuilder):
@@ -199,12 +216,20 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
         num_reqs = seq_lens.shape[0]
         cu_seqlens_q = attn_metadata.query_start_loc if causal else None
         max_seqlen_q = attn_metadata.max_query_len if causal else num_tokens // max(num_reqs, 1)
+        context = None
         if self.key_cache is not None and self.value_cache is not None:
             block_table = attn_metadata.block_tables
             if block_table.shape[0] < num_reqs:
                 raise RuntimeError("FA4 block table has fewer rows than requests.")
             # FA4's kernel uses a packed row stride derived from max_seqlen_k.
-            key, value, block_table = _fa4_cache_views(self.key_cache, self.value_cache, block_table[:num_reqs])
+            if causal and not self.key_cache.is_contiguous():
+                context = get_forward_context()
+            key, value, block_table = _fa4_cache_views(
+                self.key_cache,
+                self.value_cache,
+                block_table[:num_reqs],
+                forward_context=context,
+            )
             block_size = self.key_cache.shape[1]
             max_seqlen_k = block_table.shape[1] * block_size
         else:
@@ -238,7 +263,8 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
             query.device,
             self.scale,
         )
-        context = get_forward_context()
+        if context is None:
+            context = get_forward_context()
         cache = getattr(context, _FA4_META_CACHE_ATTR, None)
         if cache is None:
             cache = {}
@@ -303,6 +329,8 @@ class AscendFA4Backend(AscendAttentionBackend):
 
 
 class AscendFA4TargetMetadataBuilder(AscendAttentionMetadataBuilder):
+    requires_attention_mask = False
+
     def __init__(self, kv_cache_spec, layer_names, vllm_config, device):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device)
         _load_fa4()

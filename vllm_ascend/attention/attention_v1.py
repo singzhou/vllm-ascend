@@ -248,6 +248,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
     # length that will be pulled into the front of the batch.
     reorder_batch_threshold: int = 1
     metadata_cls: type[AscendMetadata] = AscendMetadata
+    requires_attention_mask: bool = True
 
     def __init__(
         self,
@@ -418,7 +419,11 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         attn_state = common_attn_metadata.attn_state
 
         # Get attn_mask from singleton AttentionMaskBuilder
-        attn_mask = self.attn_mask_builder.get_attention_mask(common_attn_metadata.causal, self.model_config)
+        attn_mask = (
+            self.attn_mask_builder.get_attention_mask(common_attn_metadata.causal, self.model_config)
+            if self.requires_attention_mask
+            else None
+        )
 
         query_start_loc, actual_seq_lengths_q, seq_lens_list, seq_lens, block_table = self._build_fia_seq_inputs(
             common_attn_metadata,

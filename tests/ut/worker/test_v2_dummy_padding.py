@@ -357,7 +357,10 @@ def test_dummy_slot_mapping_uses_padded_persistent_buffer(buffers, runner):
     "mode,is_dummy,expected_input_tokens",
     [(CUDAGraphMode.PIECEWISE, True, 16), (CUDAGraphMode.PIECEWISE, False, 2), (CUDAGraphMode.NONE, True, 2)],
 )
-def test_attention_keeps_actual_queries_and_padded_dummy_inputs(buffers, mode, is_dummy, expected_input_tokens):
+@pytest.mark.parametrize("skip_draft_groups", [False, True])
+def test_attention_keeps_actual_queries_and_padded_dummy_inputs(
+    buffers, mode, is_dummy, expected_input_tokens, skip_draft_groups
+):
     with patch.object(buffers, "dummy_num_tokens", 2), patch("vllm_ascend.worker.v2.input_batch.update_cos_sin"):
         batch = AscendInputBatch.make_dummy(1, 16, buffers)
     batch.is_dummy = is_dummy
@@ -370,9 +373,20 @@ def test_attention_keeps_actual_queries_and_padded_dummy_inputs(buffers, mode, i
     state.kvpp_runtime = None
     state.kvpp_is_dummy_run = False
     state.device_metadata = None
+    target_group = SimpleNamespace(layer_names=["target"])
+    draft_group = SimpleNamespace(layer_names=["draft"])
+    mixed_group = SimpleNamespace(layer_names=["target_shared", "draft"])
+    attn_groups = [[target_group, draft_group], [draft_group], [mixed_group]]
+    if skip_draft_groups:
+        state.draft_attn_layer_names_to_skip = frozenset({"draft"})
     with patch("vllm_ascend.worker.v2.model_states.default.build_attn_metadata", return_value={}) as build:
-        assert state.prepare_attn(batch, mode, (), torch.full((1, 16), -1), [], None) == {}
+        assert state.prepare_attn(batch, mode, (), torch.full((1, 16), -1), attn_groups, None) == {}
     kwargs = build.call_args.kwargs
+    assert attn_groups == [[target_group, draft_group], [draft_group], [mixed_group]]
+    if skip_draft_groups:
+        assert kwargs["attn_groups"] == [[target_group], [], [mixed_group]]
+    else:
+        assert kwargs["attn_groups"] is attn_groups
     assert kwargs["num_input_tokens"] == expected_input_tokens
     assert kwargs.get("num_actual_tokens", kwargs["num_tokens"]) == 2
     assert kwargs["max_query_len"] == 2

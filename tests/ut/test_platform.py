@@ -2585,26 +2585,49 @@ def test_parallel_draft_attention_backend_selection(mode, expected):
     assert selected == expected
 
 
-@pytest.mark.parametrize("blocker", [None, "flag_off", "dcp", "av", "kv_quant"])
+@pytest.mark.parametrize(
+    "blocker",
+    [None, "flag_off", "dcp", "av", "kv_quant", "target_head", "target_dtype", "draft_head", "draft_kv_quant"],
+)
 def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "0" if blocker == "flag_off" else "1")
+    target_head = 128 if blocker == "target_head" else 256
+    target_dtype = torch.float32 if blocker == "target_dtype" else torch.bfloat16
+    draft_head = 64 if blocker == "draft_head" else 128
+    draft_kv_dtype = "fp8" if blocker == "draft_kv_quant" else None
+    target_kv_dtype = "fp8" if blocker == "kv_quant" else "auto"
     config = SimpleNamespace(
         use_v2_model_runner=True,
-        model_config=SimpleNamespace(architecture="Qwen3_5ForConditionalGeneration"),
-        speculative_config=SimpleNamespace(use_dspark=lambda: True, enable_adaptive_verification=blocker == "av"),
+        model_config=SimpleNamespace(
+            architecture="Qwen3_5ForConditionalGeneration", get_head_size=lambda: target_head, dtype=target_dtype
+        ),
+        speculative_config=SimpleNamespace(
+            use_dspark=lambda: True,
+            enable_adaptive_verification=blocker == "av",
+            draft_model_config=SimpleNamespace(get_head_size=lambda: draft_head, dtype=torch.bfloat16),
+            kv_cache_dtype=draft_kv_dtype,
+        ),
         parallel_config=SimpleNamespace(
             pipeline_parallel_size=1,
             prefill_context_parallel_size=1,
             decode_context_parallel_size=2 if blocker == "dcp" else 1,
         ),
-        cache_config=SimpleNamespace(cache_dtype="fp8" if blocker == "kv_quant" else "auto"),
+        cache_config=SimpleNamespace(cache_dtype=target_kv_dtype),
         attention_config=SimpleNamespace(backend_per_kind={}),
         kv_transfer_config=None,
     )
     ascend_config = SimpleNamespace(
         sparse_kv_offload_config=SimpleNamespace(enabled=False), kvpp_config=SimpleNamespace(size=1)
     )
-    selector = AttentionSelectorConfig(head_size=256, dtype=torch.bfloat16, kv_cache_dtype="auto", block_size=None)
+    selector = AttentionSelectorConfig(
+        head_size=target_head, dtype=target_dtype, kv_cache_dtype=target_kv_dtype, block_size=None
+    )
+    draft_selector = selector._replace(
+        head_size=draft_head,
+        dtype=torch.bfloat16,
+        kv_cache_dtype=draft_kv_dtype or target_kv_dtype,
+        use_non_causal=True,
+    )
     with (
         patch.object(fa4_v1, "_FA4_ENABLED", False),
         patch.object(fia_sink_v1, "_FIA_SINK_ENABLED", False),
@@ -2621,7 +2644,7 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
         else:
             assert selected is None
         target = NPUPlatform.get_attn_backend_cls(selected, selector)
-        draft = NPUPlatform.get_attn_backend_cls(selected, selector._replace(use_non_causal=True))
+        draft = NPUPlatform.get_attn_backend_cls(selected, draft_selector)
     if blocker is None:
         assert target.endswith(".AscendFA4TargetBackend")
         assert draft.endswith(".AscendFA4Backend")

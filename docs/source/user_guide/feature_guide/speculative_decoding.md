@@ -1008,8 +1008,9 @@ Causal DFlash KV groups retain the ordinary attention path. Startup logs include
 `Ascend FA4 backend selected` when a draft uses this backend.
 
 Set `VLLM_ASCEND_FA4_TARGET_ATTN=1` to also use causal FA4 for Qwen3.6 + DSpark
-on the V2 model runner with Ascend910B/C, head dimension 256 and FP16/BF16 NHD
-KV cache. The flag defaults to `0`. In this configuration the draft defaults
+on the V2 model runner with Ascend910B/C. The target head dimension must be 256.
+The draft head dimension can be 128 or 256. Both models require FP16/BF16 compute
+and unquantized NHD KV cache. The flag defaults to `0`. The draft defaults
 to FA4, and `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` still selects the Omni draft
 backend. When all target and draft groups consume device lengths, the runner
 skips the speculative KV length copy and host wait. Adaptive verification,

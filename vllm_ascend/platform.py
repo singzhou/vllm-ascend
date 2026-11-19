@@ -793,6 +793,8 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
     model = vllm_config.model_config
     spec = vllm_config.speculative_config
     parallel = vllm_config.parallel_config
+    supported_dtypes = (torch.float16, torch.bfloat16)
+    supported_cache_dtypes = ("auto", "float16", "bfloat16")
     if (
         not get_current_hardware_profile().supports(HardwareCapability.FA4_CAUSAL_DEVICE_LENGTHS)
         or not vllm_config.use_v2_model_runner
@@ -803,14 +805,20 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
             "Qwen3_5MoeForCausalLM",
             "Qwen3_5MoeForConditionalGeneration",
         }
+        or model.get_head_size() != 256
+        or model.dtype not in supported_dtypes
         or spec is None
         or not spec.use_dspark()
         or spec.enable_adaptive_verification
+        or spec.draft_model_config is None
+        or spec.draft_model_config.get_head_size() not in (128, 256)
+        or spec.draft_model_config.dtype not in supported_dtypes
+        or (spec.kv_cache_dtype is not None and spec.kv_cache_dtype not in supported_cache_dtypes)
         or parallel.pipeline_parallel_size != 1
         or parallel.prefill_context_parallel_size != 1
         or parallel.decode_context_parallel_size != 1
         or vllm_config.kv_transfer_config is not None
-        or vllm_config.cache_config.cache_dtype not in ("auto", "float16", "bfloat16")
+        or vllm_config.cache_config.cache_dtype not in supported_cache_dtypes
         or ascend_config.sparse_kv_offload_config.enabled
         or ascend_config.kvpp_config.size != 1
         or envs_vllm.VLLM_KV_CACHE_LAYOUT in ("LBHNC", "HND")

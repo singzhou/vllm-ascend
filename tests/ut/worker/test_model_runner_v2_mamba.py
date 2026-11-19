@@ -329,15 +329,15 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(
 ):
     expected_metadata = {"gdn": object()}
     mock_build_attn_metadata.return_value = expected_metadata
-    state = SimpleNamespace(
-        vllm_config=SimpleNamespace(
-            num_speculative_tokens=num_spec,
-            parallel_config=SimpleNamespace(decode_context_parallel_size=1),
-        ),
-        num_accepted_tokens_gpu=torch.tensor([2, 3], dtype=torch.int32),
-        max_model_len=1024,
-        draft_attn_layer_names_to_skip=frozenset({"draft", "draft_swa"}) if skip_draft_groups else frozenset(),
+    state = AscendMambaHybridModelState.__new__(AscendMambaHybridModelState)
+    state.vllm_config = SimpleNamespace(
+        num_speculative_tokens=num_spec,
+        parallel_config=SimpleNamespace(decode_context_parallel_size=1),
     )
+    state.num_accepted_tokens_gpu = torch.tensor([2, 3], dtype=torch.int32)
+    state.max_model_len = 1024
+    if skip_draft_groups:
+        state.draft_attn_layer_names_to_skip = frozenset({"draft", "draft_swa"})
     input_batch = SimpleNamespace(
         num_reqs=2,
         num_reqs_after_padding=4,
@@ -362,8 +362,7 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(
     mixed_group = SimpleNamespace(layer_names=["target_shared", "draft"])
     attn_groups = [[target_group, draft_group], [draft_swa_group], [mixed_group]]
 
-    metadata = AscendMambaHybridModelState.prepare_attn(
-        state,
+    metadata = state.prepare_attn(
         input_batch=input_batch,
         cudagraph_mode=graph_mode,
         block_tables=(),
