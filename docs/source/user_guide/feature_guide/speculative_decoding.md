@@ -1013,10 +1013,23 @@ The draft head dimension can be 128 or 256. Both models require FP16/BF16 comput
 and unquantized NHD KV cache. The flag defaults to `0`. The draft defaults
 to FA4, and `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` still selects the Omni draft
 backend. When all target and draft groups consume device lengths, the runner
-skips the speculative KV length copy and host wait. Adaptive verification,
-pipeline/context parallelism, sparse offload and KV transfer use their existing
-paths. Check the startup log for
+skips the speculative KV length copy and host wait. Pipeline/context
+parallelism, sparse offload and KV transfer use their existing paths. Check the startup log for
 `Speculative CPU length synchronization bypass enabled: True`.
+
+For Qwen3.6/3.8 with DSpark adaptive verification, the same flag selects
+causal FA4 on the Ascend ragged `FULL_DECODE_ONLY` path. Use a dense Qwen
+hybrid checkpoint with Mamba cache mode `align`, a DSpark checkpoint with a
+confidence head, `DP=PP=PCP=DCP=1`, and a capture size at least as large as
+`max_num_seqs`. Keep the Ascend AV adaptation enabled and set
+`VLLM_ASCEND_DSPARK_AV_GRAPH=ragged` or use its default. Both the FA4 activation
+and the host length bypass are reported separately at startup.
+
+Set `VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC=1` to also skip the speculative
+host KV-count snapshot after the runner validates the initialized AV manager
+and compatible attention groups. Its default is `0` to allow validating
+the FA4 verifier with the snapshot still enabled. The AV confidence transfers
+are controlled by the AV manager.
 
 After installing the wheel, validate eager accuracy and graph replay with changed
 KV lengths (head dimensions 128/256, FP16/BF16, and padded requests):

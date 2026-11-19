@@ -338,6 +338,9 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             num_accepted_tokens=num_accepted_tokens,
             num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,
         )
+        max_query_len = input_batch.max_query_len
+        if max_query_len is None:
+            max_query_len = input_batch.num_scheduled_tokens.max().item()
         self.attn_metadata = build_attn_metadata(
             attn_groups=self._target_attention_groups(attn_groups),
             num_reqs=num_reqs,
@@ -346,7 +349,7 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             num_actual_tokens=input_batch.num_tokens,
             query_start_loc_gpu=input_batch.query_start_loc,
             query_start_loc_cpu=torch.from_numpy(input_batch.query_start_loc_np),
-            max_query_len=input_batch.num_scheduled_tokens.max().item(),
+            max_query_len=max_query_len,
             seq_lens=input_batch.seq_lens,
             max_seq_len=self.max_model_len,
             block_tables=block_tables,

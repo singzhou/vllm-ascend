@@ -809,7 +809,6 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         or model.dtype not in supported_dtypes
         or spec is None
         or not spec.use_dspark()
-        or spec.enable_adaptive_verification
         or spec.draft_model_config is None
         or spec.draft_model_config.get_head_size() not in (128, 256)
         or spec.draft_model_config.dtype not in supported_dtypes
@@ -824,6 +823,32 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         or envs_vllm.VLLM_KV_CACHE_LAYOUT in ("LBHNC", "HND")
     ):
         return
+
+    if spec.enable_adaptive_verification:
+        from vllm.config.compilation import CUDAGraphMode
+
+        from vllm_ascend.worker.v2.spec_decode.dspark.av_config import (
+            GRAPH_MODE_RAGGED,
+            adaptive_verification_enabled,
+            av_graph_mode,
+        )
+
+        # Check the requested mode here. The runner checks the graph mode and
+        # AV manager that were actually initialized after loading the draft.
+        if (
+            model.is_moe
+            or parallel.data_parallel_size != 1
+            or vllm_config.cache_config.mamba_cache_mode != "align"
+            or vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY
+            or ascend_config.finegrained_tp_config.lmhead_tensor_parallel_size > 0
+            or not adaptive_verification_enabled(vllm_config)
+            or av_graph_mode() != GRAPH_MODE_RAGGED
+        ):
+            logger.info_once(
+                "FA4 target attention with DSpark adaptive verification requires a dense Qwen hybrid with "
+                "Mamba cache align, DP=1, LM head TP disabled, and the Ascend ragged FULL_DECODE_ONLY path."
+            )
+            return
 
     # Carry the opt-in through vLLM's memoized selector. DSpark copies this
     # per-kind configuration into its draft config, with use_non_causal set.

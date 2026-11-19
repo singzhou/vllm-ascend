@@ -351,6 +351,7 @@ def test_zero_draft_decode_preserves_previous_accepted_selector(monkeypatch):
         vllm_config=SimpleNamespace(num_speculative_tokens=7, parallel_config=SimpleNamespace()),
         num_accepted_tokens_gpu=torch.tensor([2, 6, 1]),
         max_model_len=100,
+        _target_attention_groups=lambda groups: groups,
     )
     # Row a has no scheduled drafts but six accepted outputs last round. Row b
     # has one draft; row p is genuine prefill and must stay outside spec decode.
@@ -360,12 +361,14 @@ def test_zero_draft_decode_preserves_previous_accepted_selector(monkeypatch):
         is_prefilling_np=np.array([False, False, True]),
         idx_mapping=torch.tensor([1, 0, 2]),
         num_scheduled_tokens=np.array([1, 2, 4]),
+        max_query_len=None,
         num_draft_tokens_per_req=np.array([0, 1, 0]),
         query_start_loc=torch.tensor([0, 1, 3, 7]),
         query_start_loc_np=np.array([0, 1, 3, 7]),
         seq_lens=torch.tensor([30, 20, 4]),
         dcp_local_seq_lens=None,
         seq_lens_np=np.array([30, 20, 4]),
+        seq_lens_cpu_upper_bound=torch.tensor([30, 20, 4]),
         positions=None,
         attn_state=None,
     )

@@ -56,6 +56,7 @@ def _make_runner(need_timing: bool = True):
     runner.attn_groups = []
     runner._uses_flashmla = False
     runner.adaptive_verification = None
+    runner.speculative_config = None
     runner.input_buffers = SimpleNamespace(dummy_num_tokens=None)
     runner.compilation_config = SimpleNamespace(cudagraph_mode=CUDAGraphMode.NONE)
     runner.use_fia = False
@@ -1233,8 +1234,11 @@ def test_initialize_kv_cache_installs_aclgraph_factory_and_pcp(a5, architecture)
     runner.init_routed_experts_capturer.assert_called_once_with()
 
 
-@pytest.mark.parametrize("fa4_enabled, skip_length_sync", [(False, False), (False, True), (True, False), (True, True)])
-def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enabled, skip_length_sync):
+@pytest.mark.parametrize(
+    "fa4_enabled, skip_length_sync, adaptive_av",
+    [(False, False, False), (False, True, False), (True, False, False), (True, True, False), (True, False, True)],
+)
+def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enabled, skip_length_sync, adaptive_av):
     """Forward the allocation context and gate the target's draft metadata filter."""
     monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "1" if fa4_enabled else "0")
     runner = _make_runner()
@@ -1248,6 +1252,7 @@ def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enable
     runner.pcp_manager = None
     runner.model_state.draft_attn_layer_names_to_skip = frozenset({"previous_draft"})
     runner.speculator = SimpleNamespace(draft_attn_layer_names={"draft"})
+    runner.speculative_config = SimpleNamespace(enable_adaptive_verification=adaptive_av)
     runner.model_config = SimpleNamespace(enable_return_routed_experts=False, architecture="OtherModel")
     called = False
     captured_kwargs: dict[str, object] = {}
@@ -1282,6 +1287,7 @@ def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enable
         patch("vllm_ascend.ops.kda_state_copy_plan.initialize_kda_state_copy", side_effect=_prepare_kda) as prepare_kda,
         patch.object(GPUModelRunner, "initialize_kv_cache", _super),
         patch.object(NPUModelRunner, "_can_skip_spec_cpu_length_sync", return_value=skip_length_sync),
+        patch.object(NPUModelRunner, "_validate_fa4_adaptive_verification") as validate_av,
         patch("vllm_ascend.worker.v2.model_runner.ModelAclGraphManager", return_value="acl"),
         patch(
             "vllm_ascend.worker.v2.model_runner.KVPPRuntime.create_from_kv_cache",
@@ -1293,7 +1299,9 @@ def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enable
     prepare_kda.assert_called_once_with(runner.compilation_config.static_forward_context, 8)
     assert called is True
     assert captured_kwargs["kv_cache_allocation_context"] is allocation_context
-    expected_draft_layers = frozenset({"draft"}) if fa4_enabled and skip_length_sync else frozenset()
+    assert validate_av.call_count == int(adaptive_av)
+    assert runner._use_fa4_adaptive_verification is adaptive_av
+    expected_draft_layers = frozenset({"draft"}) if fa4_enabled and (skip_length_sync or adaptive_av) else frozenset()
     assert runner.model_state.draft_attn_layer_names_to_skip == expected_draft_layers
 
 
@@ -1931,6 +1939,65 @@ def test_fa4_cpu_length_sync_bypass_checks_active_draft_paths(blocker):
     assert runner._can_skip_spec_cpu_length_sync() is (blocker is None)
 
 
+@pytest.mark.parametrize(
+    "blocker",
+    [
+        None,
+        "target_backend",
+        "no_manager",
+        "upstream_manager",
+        "confidence",
+        "mode",
+        "not_ragged",
+        "uniform",
+        "capture_capacity",
+        "draft_backend",
+    ],
+)
+def test_fa4_adaptive_verification_requires_loaded_compatible_graph(blocker):
+    from vllm_ascend.worker.v2.spec_decode.dspark.adaptive_verification import AscendAdaptiveVerificationManager
+
+    runner = _make_runner()
+    runner._use_fa4_target_attention = blocker != "target_backend"
+    if blocker == "upstream_manager":
+        runner.adaptive_verification = object()
+    elif blocker != "no_manager":
+        runner.adaptive_verification = AscendAdaptiveVerificationManager.__new__(AscendAdaptiveVerificationManager)
+    runner.speculator = SimpleNamespace(
+        use_confidence_head=blocker != "confidence",
+        _group_causal=False,
+        attn_groups=[
+            [SimpleNamespace(backend=AscendAttentionBackend if blocker == "draft_backend" else AscendFA4Backend)]
+        ],
+    )
+    runner.max_num_reqs = 16
+    runner.cudagraph_manager = SimpleNamespace(
+        cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE if blocker == "mode" else CUDAGraphMode.FULL_DECODE_ONLY,
+        av_refuse_impure_batches=blocker != "not_ragged",
+        varlen_decode=blocker != "uniform",
+        capture_sizes=[8] if blocker == "capture_capacity" else [8, 16],
+    )
+    if blocker is None:
+        runner._validate_fa4_adaptive_verification()
+    else:
+        with pytest.raises(ValueError, match="loaded confidence head"):
+            runner._validate_fa4_adaptive_verification()
+
+
+@pytest.mark.parametrize("validated_av, opt_in", [(False, False), (False, True), (True, False), (True, True)])
+def test_fa4_adaptive_verification_host_snapshot_is_opt_in(monkeypatch, validated_av, opt_in):
+    monkeypatch.setenv("VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC", str(int(opt_in)))
+    runner = _make_runner()
+    runner._use_fa4_adaptive_verification = validated_av
+    runner.adaptive_verification = object()
+    runner.speculator = SimpleNamespace(_group_causal=False, attn_groups=[[SimpleNamespace(backend=AscendFA4Backend)]])
+    runner.vllm_config.parallel_config = SimpleNamespace(
+        pipeline_parallel_size=1, prefill_context_parallel_size=1, decode_context_parallel_size=1
+    )
+    runner.ascend_config.kvpp_config = SimpleNamespace(size=1)
+    assert runner._can_skip_fa4_target_cpu_length_sync() is (validated_av and opt_in)
+
+
 @pytest.mark.parametrize("uses_fa4", [False, True])
 def test_full_graph_fa4_has_fixed_request_axis_and_zero_query_padding(uses_fa4):
     runner, output, batch, desc = _prepare_inputs_runner(full_cg=True)
@@ -1944,6 +2011,55 @@ def test_full_graph_fa4_has_fixed_request_axis_and_zero_query_padding(uses_fa4):
     assert seq_lens.shape == (4,)
     expected_offsets = [0, 2, 4, 4, 4] if uses_fa4 else [0, 2, 4, 6, 8]
     assert offsets.tolist() == expected_offsets
+
+
+@pytest.mark.parametrize("admitted", [(0, 0), (4, 0), (7, 7)])
+def test_fa4_adaptive_verification_reuses_device_boundaries_and_zero_padding(admitted):
+    runner, output, batch, desc = _prepare_inputs_runner(draft=True, full_cg=True)
+    runner._use_fa4_target_attention = True
+    runner._use_fa4_adaptive_verification = True
+    runner.decode_query_len = 8
+    runner.adaptive_verification_enabled = True
+    output.scheduled_spec_decode_tokens = dict.fromkeys(batch.req_ids, [0] * 7)
+    output.num_scheduled_tokens = dict.fromkeys(batch.req_ids, 8)
+    batch.num_scheduled_tokens[:] = 8
+    batch.num_computed_prefill_tokens_np[:] = batch.prefill_len_np
+    batch.is_prefilling_np[:] = False
+    batch.has_prefill = False
+    budget = sum(admitted)
+    batch.num_tokens = 2 + budget
+    desc.num_tokens = 16 if batch.num_tokens > 8 else 8
+    desc.num_reqs = 4
+    actual_offsets = torch.tensor([0, admitted[0] + 1, batch.num_tokens, batch.num_tokens, batch.num_tokens])
+
+    def reallocate(_req_ids, _idx_mapping):
+        runner.input_buffers.query_start_loc[:5].copy_(actual_offsets)
+        return actual_offsets[:3], runner.input_buffers.query_start_loc, budget
+
+    runner.adaptive_verification = SimpleNamespace(
+        note_graph_mode=Mock(),
+        compact_batch=Mock(
+            return_value=(
+                np.full(2, 1 + budget // 2, dtype=np.int32),
+                np.array([0, 8, 16] if budget else [0, 1, 2], dtype=np.int32),
+            )
+        ),
+        reallocate_drafts=Mock(side_effect=reallocate),
+    )
+    combine = Mock(return_value=torch.tensor([0, 1], dtype=torch.int32))
+    with (
+        patch.object(runner, "_pad_adaptive_query_start_loc_for_fia") as fia_padding,
+        patch.object(torch.Tensor, "cpu", side_effect=AssertionError("unexpected device length readback")),
+    ):
+        _run_prepare_inputs(runner, output, batch, desc, combine_tokens=combine)
+
+    fia_padding.assert_not_called()
+    runner.adaptive_verification.note_graph_mode.assert_called_once_with(CUDAGraphMode.FULL)
+    offsets, seq_lens, _, _, logits_offsets, num_logits = combine.call_args.args[3:9]
+    assert offsets.tolist() == actual_offsets.tolist()
+    assert seq_lens.shape == (4,)
+    assert logits_offsets.tolist() == actual_offsets[:3].tolist()
+    assert num_logits == batch.num_tokens
 
 
 def test_flashmla_cpu_lengths_keep_upper_bounds_without_event_wait():

@@ -2587,10 +2587,31 @@ def test_parallel_draft_attention_backend_selection(mode, expected):
 
 @pytest.mark.parametrize(
     "blocker",
-    [None, "flag_off", "dcp", "av", "kv_quant", "target_head", "target_dtype", "draft_head", "draft_kv_quant"],
+    [
+        None,
+        "flag_off",
+        "dcp",
+        "kv_quant",
+        "target_head",
+        "target_dtype",
+        "draft_head",
+        "draft_kv_quant",
+        "av_ragged",
+        "av_upstream",
+        "av_uniform",
+        "av_piecewise",
+        "av_dp",
+        "av_cache_none",
+        "av_lmhead_tp",
+        "av_moe",
+    ],
 )
 def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "0" if blocker == "flag_off" else "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_ADAPT", "0" if blocker == "av_upstream" else "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_GRAPH", "uniform" if blocker == "av_uniform" else "ragged")
+    use_av = bool(blocker and blocker.startswith("av_"))
+    expect_fa4 = blocker in (None, "av_ragged")
     target_head = 128 if blocker == "target_head" else 256
     target_dtype = torch.float32 if blocker == "target_dtype" else torch.bfloat16
     draft_head = 64 if blocker == "draft_head" else 128
@@ -2599,34 +2620,55 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     config = SimpleNamespace(
         use_v2_model_runner=True,
         model_config=SimpleNamespace(
-            architecture="Qwen3_5ForConditionalGeneration", get_head_size=lambda: target_head, dtype=target_dtype
+            architecture="Qwen3_5ForConditionalGeneration",
+            get_head_size=lambda: target_head,
+            dtype=target_dtype,
+            is_moe=blocker == "av_moe",
         ),
         speculative_config=SimpleNamespace(
+            method="dspark",
             use_dspark=lambda: True,
-            enable_adaptive_verification=blocker == "av",
+            enable_adaptive_verification=use_av,
+            num_speculative_tokens=7,
             draft_model_config=SimpleNamespace(get_head_size=lambda: draft_head, dtype=torch.bfloat16),
             kv_cache_dtype=draft_kv_dtype,
         ),
         parallel_config=SimpleNamespace(
+            data_parallel_size=2 if blocker == "av_dp" else 1,
             pipeline_parallel_size=1,
             prefill_context_parallel_size=1,
             decode_context_parallel_size=2 if blocker == "dcp" else 1,
         ),
-        cache_config=SimpleNamespace(cache_dtype=target_kv_dtype),
+        cache_config=SimpleNamespace(
+            cache_dtype=target_kv_dtype, mamba_cache_mode="none" if blocker == "av_cache_none" else "align"
+        ),
         attention_config=SimpleNamespace(backend_per_kind={}),
+        compilation_config=SimpleNamespace(
+            cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE
+            if blocker == "av_piecewise"
+            else CUDAGraphMode.FULL_DECODE_ONLY
+        ),
         kv_transfer_config=None,
+        lora_config=None,
     )
     ascend_config = SimpleNamespace(
-        sparse_kv_offload_config=SimpleNamespace(enabled=False), kvpp_config=SimpleNamespace(size=1)
+        sparse_kv_offload_config=SimpleNamespace(enabled=False),
+        kvpp_config=SimpleNamespace(size=1),
+        finegrained_tp_config=SimpleNamespace(lmhead_tensor_parallel_size=2 if blocker == "av_lmhead_tp" else 0),
     )
     selector = AttentionSelectorConfig(
-        head_size=target_head, dtype=target_dtype, kv_cache_dtype=target_kv_dtype, block_size=None
+        head_size=target_head,
+        dtype=target_dtype,
+        kv_cache_dtype=target_kv_dtype,
+        block_size=None,
+        use_adaptive_verification=use_av,
     )
     draft_selector = selector._replace(
         head_size=draft_head,
         dtype=torch.bfloat16,
         kv_cache_dtype=draft_kv_dtype or target_kv_dtype,
         use_non_causal=True,
+        use_adaptive_verification=False,
     )
     with (
         patch.object(fa4_v1, "_FA4_ENABLED", False),
@@ -2639,13 +2681,13 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     ):
         _configure_fa4_target_attention(config, ascend_config)
         selected = config.attention_config.backend_per_kind.get(KVCacheSpecKind.FULL_ATTENTION.value)
-        if blocker is None:
+        if expect_fa4:
             assert selected is AttentionBackendEnum.CUSTOM
         else:
             assert selected is None
         target = NPUPlatform.get_attn_backend_cls(selected, selector)
         draft = NPUPlatform.get_attn_backend_cls(selected, draft_selector)
-    if blocker is None:
+    if expect_fa4:
         assert target.endswith(".AscendFA4TargetBackend")
         assert draft.endswith(".AscendFA4Backend")
     else:

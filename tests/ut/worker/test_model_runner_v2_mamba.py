@@ -347,6 +347,7 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(
         idx_mapping=torch.tensor([0, 1]),
         num_draft_tokens_per_req=np.full(2, num_spec, dtype=np.int32),
         num_scheduled_tokens=np.full(2, num_spec + 1, dtype=np.int32),
+        max_query_len=8 if for_capture else None,
         query_start_loc=torch.arange(5, dtype=torch.int32) * (num_spec + 1),
         query_start_loc_np=np.arange(5, dtype=np.int32) * (num_spec + 1),
         seq_lens=None,
@@ -384,6 +385,7 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(
     graph_requests = 4 if graph_mode == CUDAGraphMode.FULL else 2
     assert kwargs["num_reqs"] == graph_requests
     assert kwargs["num_tokens"] == graph_requests * (num_spec + 1)
+    assert kwargs["max_query_len"] == (8 if for_capture else num_spec + 1)
     model_metadata = kwargs["model_specific_attn_metadata"]
     if num_spec and not for_capture:
         assert model_metadata.num_decode_draft_tokens_cpu.tolist() == [num_spec] * graph_requests

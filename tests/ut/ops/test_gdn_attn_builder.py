@@ -1779,6 +1779,24 @@ def test_gdn_builder_defines_build_once_and_routes_through_the_local_view() -> N
     } <= {node.func.id for node in ast.walk(view) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
 
 
+def test_gdn_padding_preserves_device_query_allocation_for_zero_length_suffix() -> None:
+    common_metadata = create_common_attn_metadata(
+        BatchSpec(seq_lens=[64, 64, 0, 0], query_lens=[3, 3, 0, 0], name="av_with_uneven_drafts"),
+        block_size=16,
+        device=torch.device("cpu"),
+    )
+    # CPU evenly distributes the budget; the device gives all four drafts to request 0.
+    actual_offsets = torch.tensor([0, 5, 6, 6, 6], dtype=torch.int32)
+    common_metadata = common_metadata.replace(query_start_loc=actual_offsets)
+    drafts = torch.tensor([7, 7, -1, -1], dtype=torch.int32)
+
+    updated = ascend_gdn_attn_builder._remove_spec_graph_padding_queries(common_metadata, drafts)
+
+    assert updated is common_metadata
+    assert updated.query_start_loc is actual_offsets
+    assert updated.query_start_loc_cpu.tolist() == [0, 3, 6, 6, 6]
+
+
 def test_gdn_local_view_zeroes_padding_rows_and_keeps_each_group_block_table() -> None:
     """Inactive graph rows must be zero-length; the block table must stay local.
 
