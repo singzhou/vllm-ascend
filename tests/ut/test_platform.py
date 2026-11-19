@@ -10,6 +10,7 @@ from vllm.platforms import PlatformEnum
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 from vllm.v1.attention.selector import AttentionSelectorConfig  # type: ignore
 from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
+from vllm.v1.kv_cache_interface import KVCacheSpecKind
 
 from tests.ut.base import TestBase
 from vllm_ascend.ascend_forward_context import MoECommType, override_mrv2_in_profile_run
@@ -17,6 +18,7 @@ from vllm_ascend.attention import fa4_v1, fia_sink_v1
 from vllm_ascend.device.hardware_profile import get_hardware_profile
 from vllm_ascend.platform import (
     NPUPlatform,
+    _configure_fa4_target_attention,
     _setup_compile_backend,
     _validate_deepseek_v4_tp_config,
     _validate_draft_decode_context_parallel_config,
@@ -2581,3 +2583,47 @@ def test_parallel_draft_attention_backend_selection(mode, expected):
     ):
         selected = NPUPlatform.get_attn_backend_cls(None, selector)
     assert selected == expected
+
+
+@pytest.mark.parametrize("blocker", [None, "flag_off", "dcp", "av", "kv_quant"])
+def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "0" if blocker == "flag_off" else "1")
+    config = SimpleNamespace(
+        use_v2_model_runner=True,
+        model_config=SimpleNamespace(architecture="Qwen3_5ForConditionalGeneration"),
+        speculative_config=SimpleNamespace(use_dspark=lambda: True, enable_adaptive_verification=blocker == "av"),
+        parallel_config=SimpleNamespace(
+            pipeline_parallel_size=1,
+            prefill_context_parallel_size=1,
+            decode_context_parallel_size=2 if blocker == "dcp" else 1,
+        ),
+        cache_config=SimpleNamespace(cache_dtype="fp8" if blocker == "kv_quant" else "auto"),
+        attention_config=SimpleNamespace(backend_per_kind={}),
+        kv_transfer_config=None,
+    )
+    ascend_config = SimpleNamespace(
+        sparse_kv_offload_config=SimpleNamespace(enabled=False), kvpp_config=SimpleNamespace(size=1)
+    )
+    selector = AttentionSelectorConfig(head_size=256, dtype=torch.bfloat16, kv_cache_dtype="auto", block_size=None)
+    with (
+        patch.object(fa4_v1, "_FA4_ENABLED", False),
+        patch.object(fia_sink_v1, "_FIA_SINK_ENABLED", False),
+        patch("vllm_ascend.platform._validate_fa3_backend", return_value=False),
+        patch("vllm_ascend.platform.envs_vllm.VLLM_KV_CACHE_LAYOUT", "NHD"),
+        patch(
+            "vllm_ascend.platform.get_current_hardware_profile", return_value=get_hardware_profile(AscendDeviceType.A2)
+        ),
+    ):
+        _configure_fa4_target_attention(config, ascend_config)
+        selected = config.attention_config.backend_per_kind.get(KVCacheSpecKind.FULL_ATTENTION.value)
+        if blocker is None:
+            assert selected is AttentionBackendEnum.CUSTOM
+        else:
+            assert selected is None
+        target = NPUPlatform.get_attn_backend_cls(selected, selector)
+        draft = NPUPlatform.get_attn_backend_cls(selected, selector._replace(use_non_causal=True))
+    if blocker is None:
+        assert target.endswith(".AscendFA4TargetBackend")
+        assert draft.endswith(".AscendFA4Backend")
+    else:
+        assert target == draft == "vllm_ascend.attention.attention_v1.AscendAttentionBackend"

@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F
 import torch_npu  # noqa: F401
 
-from vllm_ascend.attention.fa4_v1 import AscendFA4Impl
+from vllm_ascend.attention.fa4_v1 import AscendFA4Impl, AscendFA4TargetImpl
 
 
 @pytest.mark.parametrize("head_size", [128, 256])
@@ -90,3 +90,72 @@ def test_fa4_draft_eager_and_graph_replay(head_size, dtype):
         graph.replay()
         torch.npu.synchronize()
         torch.testing.assert_close(graph_output, eager[index], atol=1e-3, rtol=1e-3)
+
+
+@torch.inference_mode()
+def test_fa4_causal_ragged_replay_after_rejection():
+    if "Ascend910" not in torch.npu.get_device_name():
+        pytest.skip("FA4 AICPU metadata requires Ascend910")
+    torch.manual_seed(0)
+    heads, kv_heads, head_size, page_size = 4, 2, 256, 128
+    query = torch.randn(8, heads, head_size, device="npu", dtype=torch.bfloat16)
+    key = torch.randn(4, page_size, kv_heads, head_size, device="npu", dtype=torch.bfloat16)
+    value = torch.randn_like(key)
+    offsets = torch.empty(3, device="npu", dtype=torch.int32)
+    lengths = torch.empty(2, device="npu", dtype=torch.int32)
+    table = torch.empty(2, 2, device="npu", dtype=torch.int32)
+    metadata = SimpleNamespace(
+        causal=True,
+        num_actual_tokens=query.shape[0],
+        seq_lens=lengths,
+        block_tables=table,
+        query_start_loc=offsets,
+        max_query_len=4,
+    )
+    impl = AscendFA4TargetImpl.__new__(AscendFA4TargetImpl)
+    impl.key_cache, impl.value_cache = key, value
+    impl.num_heads, impl.num_kv_heads, impl.head_size = heads, kv_heads, head_size
+    impl.scale = head_size**-0.5
+    impl.use_bnsd_kv_cache = False
+
+    def set_batch(query_offsets, kv_lengths, page_ids):
+        for buffer, data in ((offsets, query_offsets), (lengths, kv_lengths), (table, page_ids)):
+            buffer.copy_(torch.tensor(data, device=query.device, dtype=torch.int32))
+
+    def run():
+        with (
+            patch("vllm_ascend.attention.fa4_v1.get_forward_context", return_value=SimpleNamespace()),
+            patch("vllm_ascend.attention.fa4_v1._EXTRA_CTX", SimpleNamespace(capturing=True)),
+        ):
+            return impl.forward_impl(query, None, None, None, metadata, torch.empty_like(query))
+
+    cases = (
+        ([0, 4, 8], [140, 255], [[0, 1], [2, 3]]),
+        ([0, 3, 3], [127, 0], [[1, 0], [0, 0]]),
+        ([0, 1, 5], [129, 90], [[3, 0], [2, 1]]),
+    )
+    q_cpu, k_cpu, v_cpu = query.cpu().float(), key.cpu().float(), value.cpu().float()
+    set_batch(*cases[0])
+    run()
+    torch.npu.synchronize()
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        graph_output = run()
+
+    for query_offsets, kv_lengths, page_ids in (*cases[1:], cases[0]):
+        set_batch(query_offsets, kv_lengths, page_ids)
+        graph.replay()
+        actual = graph_output.cpu().float()
+        expected = torch.zeros_like(actual)
+        for row, (start, end) in enumerate(zip(query_offsets[:-1], query_offsets[1:])):
+            if start == end:
+                continue
+            length = kv_lengths[row]
+            keys = k_cpu[page_ids[row]].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
+            values = v_cpu[page_ids[row]].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
+            q = q_cpu[start:end].transpose(0, 1)
+            mask = torch.ones(end - start, length, dtype=torch.bool).tril(length - (end - start))
+            expected[start:end] = F.scaled_dot_product_attention(
+                q, keys.transpose(0, 1), values.transpose(0, 1), attn_mask=mask, scale=impl.scale
+            ).transpose(0, 1)
+        torch.testing.assert_close(actual, expected, atol=0.02, rtol=0.02)

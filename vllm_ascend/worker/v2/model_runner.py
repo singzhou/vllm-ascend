@@ -67,6 +67,8 @@ from vllm_ascend.attention.attention_c8_mxfp import (
     fill_mxfp_v_scale_cache,
 )
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend
+from vllm_ascend.attention.fia_sink_v1 import AscendFIASinkBackend
 from vllm_ascend.attention.flashmla import prepare_flashmla_batch_req_state
 from vllm_ascend.attention.mla_v1 import AscendMLABackend, all_mla_use_flashmla
 from vllm_ascend.core.kv_cache_interface import is_circular_kv_cache_spec
@@ -94,6 +96,11 @@ from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.sparse_kv_offload_man
     init_sparse_kv_offload_manager,
 )
 from vllm_ascend.models.deepseek_v41.cache_config import uses_a5_packed_cache
+from vllm_ascend.ops.gdn_attn_builder import (
+    AscendGDNAttentionBackend,
+    AscendGDNFusedAttentionBackend,
+    AscendGDNHostMetadataBackend,
+)
 from vllm_ascend.ops.rotary_embedding import set_cos_and_sin, update_cos_sin
 from vllm_ascend.utils import (
     is_c8_mxfp_kv_quant,
@@ -145,6 +152,7 @@ class NPUModelRunner(GPUModelRunner):
     execute_model_state: ExecuteModelState | None
     kv_connector: KVConnector
     max_num_reqs: int
+    _use_fa4_target_attention = False
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         # Keep exact host counts until all active consumers are known.
@@ -431,6 +439,7 @@ class NPUModelRunner(GPUModelRunner):
     ) -> None:
         # Reinitialization can change the active attention backends.
         self._skip_spec_cpu_length_sync = False
+        self._use_fa4_target_attention = False
         # Match V1's physical buffer plan without mutating the scheduler's
         # logical cache configuration. Allocation must honor zero-stride aliases.
         kv_cache_config = deepcopy(kv_cache_config)
@@ -533,6 +542,19 @@ class NPUModelRunner(GPUModelRunner):
             for groups in self.attn_groups
             for group in groups
         )
+        if envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN:
+            target_backends = {
+                group.backend
+                for groups in self.attn_groups
+                for group in groups
+                if any(name not in draft_layer_names for name in group.layer_names)
+            }
+            self._use_fa4_target_attention = AscendFA4TargetBackend in target_backends and target_backends <= {
+                AscendFA4TargetBackend,
+                AscendGDNAttentionBackend,
+                AscendGDNFusedAttentionBackend,
+                AscendGDNHostMetadataBackend,
+            }
 
         # Legacy (pre-AuxOutput) R3 path; the getattr keeps MRv2 startable on a
         # vLLM lane where ModelConfig no longer exposes the flag.
@@ -910,7 +932,11 @@ class NPUModelRunner(GPUModelRunner):
         # Some attention backends like FA3 require query_start_loc to be non-decreasing.
         query_start_loc_np[num_reqs + 1 :] = num_tokens
 
-        if batch_desc.cg_mode == CUDAGraphMode.FULL and not adaptive_verification_manager:
+        if (
+            batch_desc.cg_mode == CUDAGraphMode.FULL
+            and not adaptive_verification_manager
+            and not self._use_fa4_target_attention
+        ):
             # This is only required for vllm-ascend.
             query_start_loc_np, num_reqs_padded = self._pad_query_start_loc_for_fia(
                 num_tokens_after_padding,
@@ -1254,8 +1280,11 @@ class NPUModelRunner(GPUModelRunner):
         return output
 
     def _can_skip_spec_cpu_length_sync(self) -> bool:
-        """Use device lengths for K3/DSpark FlashMLA, including DCP."""
+        """Use device lengths when the active target and draft paths allow it."""
         parallel = self.vllm_config.parallel_config
+        if self._use_fa4_target_attention:
+            return self._can_skip_fa4_target_cpu_length_sync()
+
         if (
             self.model_config.architecture
             not in {"KimiLinearForCausalLM", "KimiK3ForCausalLM", "KimiK3ForConditionalGeneration"}
@@ -1272,6 +1301,31 @@ class NPUModelRunner(GPUModelRunner):
         # FlashMLA derives DCP-local lengths from rejection-corrected device
         # counters. K3's non-MLA attention uses the KDA device-length path.
         return all_mla_use_flashmla(self.model)
+
+    def _can_skip_fa4_target_cpu_length_sync(self) -> bool:
+        parallel = self.vllm_config.parallel_config
+        if (
+            self.speculator is None
+            or self.sync_spec_pp_cpu_counts
+            or parallel.pipeline_parallel_size != 1
+            or parallel.prefill_context_parallel_size != 1
+            or parallel.decode_context_parallel_size != 1
+            or self.adaptive_verification is not None
+            or self.vllm_config.kv_transfer_config is not None
+            or self.ascend_config.sparse_kv_offload_config.enabled
+            or self.ascend_config.kvpp_config.size != 1
+        ):
+            return False
+
+        group_causal = self.speculator._group_causal
+        draft_groups = [group for groups in self.speculator.attn_groups for group in groups]
+        return bool(draft_groups) and all(
+            group.backend in (AscendFA4Backend, AscendFIASinkBackend)
+            and not (
+                group_causal.get(group.kv_cache_group_id, True) if isinstance(group_causal, dict) else group_causal
+            )
+            for group in draft_groups
+        )
 
     def postprocess_sampled(
         self,

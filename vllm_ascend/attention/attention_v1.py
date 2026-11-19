@@ -382,6 +382,14 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             )
         return query_start_loc, actual_seq_lengths_q, seq_lens_list, seq_lens, block_table
 
+    def _select_seq_lens(self, common_attn_metadata: AscendCommonAttentionMetadata) -> torch.Tensor:
+        return _select_seq_lens(
+            common_attn_metadata,
+            kv_cache_spec=self.kv_cache_spec,
+            speculative_config=self.speculative_config,
+            vllm_config=self.vllm_config,
+        )
+
     def build(
         self,
         common_prefix_len: int,
@@ -400,12 +408,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         block_table = common_attn_metadata.block_table_tensor
 
         # TODO: This will be moved to propose and deleted after fia ops fixed.
-        seq_lens = _select_seq_lens(
-            common_attn_metadata,
-            kv_cache_spec=self.kv_cache_spec,
-            speculative_config=self.speculative_config,
-            vllm_config=self.vllm_config,
-        )
+        seq_lens = self._select_seq_lens(common_attn_metadata)
         slot_mapping = common_attn_metadata.slot_mapping[:num_actual_tokens]
         # this slot_mapping override doesn't work since vllm will override it again. We should fix it vllm.
         # see: https://github.com/vllm-project/vllm/blob/ce88756b967c2c5006746a424c15dd59a284ed8c/vllm/model_executor/layers/attention/cross_attention.py#L117

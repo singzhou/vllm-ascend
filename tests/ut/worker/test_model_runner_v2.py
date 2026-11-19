@@ -23,6 +23,9 @@ from vllm_ascend.attention.attention_c8_mxfp import (
     mxfp_paged_cache_views,
     mxfp_v_scale_cache_shape,
 )
+from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4Backend
+from vllm_ascend.attention.fia_sink_v1 import AscendFIASinkBackend
 from vllm_ascend.attention.mla_v1 import AscendMLAImpl
 from vllm_ascend.worker.v2.input_batch import AscendInputBatch, AscendInputBuffers
 from vllm_ascend.worker.v2.model_runner import NPUModelRunner
@@ -1887,6 +1890,49 @@ def test_flashmla_cpu_length_sync_bypass_does_not_copy_or_record_event():
     current_stream.assert_not_called()
     runner.num_computed_tokens_cpu.copy_.assert_not_called()
     runner.num_computed_tokens_event.record.assert_not_called()
+
+
+@pytest.mark.parametrize("blocker", [None, "draft_fia", "causal_draft", "missing_group", "pp", "pcp", "dcp", "av"])
+def test_fa4_cpu_length_sync_bypass_checks_active_draft_paths(blocker):
+    runner = _make_runner()
+    runner._use_fa4_target_attention = True
+    runner.sync_spec_pp_cpu_counts = False
+    runner.adaptive_verification = object() if blocker == "av" else None
+    runner.vllm_config.kv_transfer_config = None
+    runner.vllm_config.parallel_config = SimpleNamespace(
+        pipeline_parallel_size=2 if blocker == "pp" else 1,
+        prefill_context_parallel_size=2 if blocker == "pcp" else 1,
+        decode_context_parallel_size=2 if blocker == "dcp" else 1,
+    )
+    runner.ascend_config.kvpp_config = SimpleNamespace(size=1)
+    runner.speculator = SimpleNamespace(
+        _group_causal={0: False, **({1: blocker == "causal_draft"} if blocker != "missing_group" else {})},
+        attn_groups=[
+            [SimpleNamespace(backend=AscendFA4Backend, kv_cache_group_id=0)],
+            [
+                SimpleNamespace(
+                    backend=AscendAttentionBackend if blocker == "draft_fia" else AscendFIASinkBackend,
+                    kv_cache_group_id=1,
+                )
+            ],
+        ],
+    )
+    assert runner._can_skip_spec_cpu_length_sync() is (blocker is None)
+
+
+@pytest.mark.parametrize("uses_fa4", [False, True])
+def test_full_graph_fa4_has_fixed_request_axis_and_zero_query_padding(uses_fa4):
+    runner, output, batch, desc = _prepare_inputs_runner(full_cg=True)
+    runner._use_fa4_target_attention = uses_fa4
+    desc.num_reqs = 4
+    desc.uniform_token_count = 2
+    combine = Mock(return_value=torch.tensor([0, 1], dtype=torch.int32))
+    _run_prepare_inputs(runner, output, batch, desc, combine_tokens=combine)
+
+    offsets, seq_lens = combine.call_args.args[3:5]
+    assert seq_lens.shape == (4,)
+    expected_offsets = [0, 2, 4, 4, 4] if uses_fa4 else [0, 2, 4, 6, 8]
+    assert offsets.tolist() == expected_offsets
 
 
 def test_flashmla_cpu_lengths_keep_upper_bounds_without_event_wait():

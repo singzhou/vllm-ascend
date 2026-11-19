@@ -159,6 +159,61 @@ def test_forward_passes_virtual_pages_to_fa4(cache_functions):
     assert torch.all(output == 1)
 
 
+@pytest.mark.parametrize("paged", [False, True])
+def test_causal_fa4_keeps_ragged_offsets_and_exact_device_lengths(cache_functions, paged):
+    fa4 = MagicMock()
+    context = SimpleNamespace()
+    namespace = functions_from_source(
+        "vllm_ascend/attention/fa4_v1.py",
+        {"forward_fused_infer_attention"},
+        dict(
+            cache_functions,
+            AscendMetadata=object,
+            _load_fa4=lambda: fa4,
+            get_forward_context=lambda: context,
+            _FA4_META_CACHE_ATTR="_ascend_fa4_meta_cache",
+            _EXTRA_CTX=SimpleNamespace(capturing=paged),
+        ),
+        object,
+    )
+    impl = namespace["Probe"]()
+    impl.supports_causal_fa4 = True
+    impl.num_heads, impl.num_kv_heads, impl.head_size = 4, 2, 256
+    impl.scale = impl.head_size**-0.5
+    impl.use_bnsd_kv_cache = False
+    impl.key_cache = torch.empty(4, 128, 2, 256) if paged else None
+    impl.value_cache = torch.empty_like(impl.key_cache) if paged else None
+    offsets = torch.tensor([0, 2, 5, 5], dtype=torch.int32)
+    lengths = torch.tensor([127, 129, 0] if paged else [2, 3, 0], dtype=torch.int32)
+    num_tokens = 8 if paged else 5
+    metadata = SimpleNamespace(
+        causal=True,
+        num_actual_tokens=num_tokens,
+        max_query_len=4,
+        query_start_loc=offsets,
+        seq_lens=lengths,
+        block_tables=torch.tensor([[2, 3], [1, 0], [0, 0]], dtype=torch.int32),
+    )
+    query = torch.randn(num_tokens, 4, 256)
+    key = torch.randn(num_tokens, 2, 256)
+    value = torch.randn_like(key)
+    output = torch.empty_like(query)
+    fa4.flash_attn_varlen_func.side_effect = lambda *args, **kwargs: torch.ones_like(query)
+
+    for _ in range(2):
+        impl.forward_fused_infer_attention(query, key, value, metadata, output)
+    fa4.get_scheduler_metadata.assert_called_once()
+    for call in (fa4.get_scheduler_metadata.call_args, fa4.flash_attn_varlen_func.call_args):
+        assert call.kwargs["causal"]
+        assert call.kwargs["cu_seqlens_q"] is offsets
+        assert call.kwargs.get("cu_seqlens_k") is (None if paged else offsets)
+        assert call.kwargs["seqused_k"] is (lengths if paged else None)
+        assert call.kwargs["max_seqlen_q"] == 4
+        assert call.kwargs["max_seqlen_k"] == (256 if paged else 4)
+    assert torch.all(output[:5] == 1)
+    assert torch.all(output[5:] == 0)
+
+
 @pytest.mark.parametrize("seq_len", [31, 32, 33, 127, 128, 129])
 @pytest.mark.parametrize("stride_factor", [2, 4])
 def test_paged_attention_across_reused_blocks(cache_functions, seq_len, stride_factor):

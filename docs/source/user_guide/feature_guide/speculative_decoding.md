@@ -1007,6 +1007,16 @@ learnable-sink, MLA, PCP and Ascend310P layers retain their existing selection.
 Causal DFlash KV groups retain the ordinary attention path. Startup logs include
 `Ascend FA4 backend selected` when a draft uses this backend.
 
+Set `VLLM_ASCEND_FA4_TARGET_ATTN=1` to also use causal FA4 for Qwen3.6 + DSpark
+on the V2 model runner with Ascend910B/C, head dimension 256 and FP16/BF16 NHD
+KV cache. The flag defaults to `0`. In this configuration the draft defaults
+to FA4, and `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` still selects the Omni draft
+backend. When all target and draft groups consume device lengths, the runner
+skips the speculative KV length copy and host wait. Adaptive verification,
+pipeline/context parallelism, sparse offload and KV transfer use their existing
+paths. Check the startup log for
+`Speculative CPU length synchronization bypass enabled: True`.
+
 After installing the wheel, validate eager accuracy and graph replay with changed
 KV lengths (head dimensions 128/256, FP16/BF16, and padded requests):
 
