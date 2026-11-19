@@ -76,6 +76,8 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
     time right after that layer's KV load finishes.
     """
 
+    draft_attn_layer_names_to_skip: frozenset[str] = frozenset()
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._layerwise_mamba_copy: _LayerwiseMambaCopyState | None = None
@@ -338,6 +340,13 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             num_accepted_tokens=num_accepted_tokens,
             num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,
         )
+        if draft_layer_names := self.draft_attn_layer_names_to_skip:
+            # DSpark builds its own metadata with the draft's causality.
+            # Preserve KV cache group indices for block tables and slot mappings.
+            attn_groups = [
+                [group for group in groups if not draft_layer_names.issuperset(group.layer_names)]
+                for groups in attn_groups
+            ]
         self.attn_metadata = build_attn_metadata(
             attn_groups=attn_groups,
             num_reqs=num_reqs,

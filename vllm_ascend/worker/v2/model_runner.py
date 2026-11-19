@@ -568,6 +568,11 @@ class NPUModelRunner(GPUModelRunner):
         )
         self.model_state.kvpp_runtime = self.kvpp
         self._skip_spec_cpu_length_sync = self._can_skip_spec_cpu_length_sync()
+        self.model_state.draft_attn_layer_names_to_skip = (
+            frozenset(draft_layer_names)
+            if self._use_fa4_target_attention and self._skip_spec_cpu_length_sync
+            else frozenset()
+        )
         logger.info("Speculative CPU length synchronization bypass enabled: %s", self._skip_spec_cpu_length_sync)
 
         self._fill_c8_mxfp_v_scale_caches()

@@ -319,8 +319,14 @@ def test_prepare_inputs_propagates_padded_request_count():
 
 @patch("vllm_ascend.worker.v2.model_states.mamba_hybrid.build_attn_metadata")
 @pytest.mark.parametrize("num_spec", [0, 3])
-@pytest.mark.parametrize("graph_mode", [CUDAGraphMode.FULL, CUDAGraphMode.NONE])
-def test_prepare_attn_keeps_actual_counts_separate_from_padding(mock_build_attn_metadata, num_spec, graph_mode):
+@pytest.mark.parametrize(
+    "graph_mode, for_capture",
+    [(CUDAGraphMode.FULL, False), (CUDAGraphMode.NONE, False), (CUDAGraphMode.NONE, True)],
+)
+@pytest.mark.parametrize("skip_draft_groups", [False, True])
+def test_prepare_attn_keeps_actual_counts_separate_from_padding(
+    mock_build_attn_metadata, num_spec, graph_mode, for_capture, skip_draft_groups
+):
     expected_metadata = {"gdn": object()}
     mock_build_attn_metadata.return_value = expected_metadata
     state = SimpleNamespace(
@@ -330,6 +336,7 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(mock_build_attn_
         ),
         num_accepted_tokens_gpu=torch.tensor([2, 3], dtype=torch.int32),
         max_model_len=1024,
+        draft_attn_layer_names_to_skip=frozenset({"draft", "draft_swa"}) if skip_draft_groups else frozenset(),
     )
     input_batch = SimpleNamespace(
         num_reqs=2,
@@ -345,9 +352,15 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(mock_build_attn_
         seq_lens=None,
         dcp_local_seq_lens=None,
         seq_lens_np=np.ones(4, dtype=np.int32),
+        seq_lens_cpu_upper_bound=torch.ones(4, dtype=torch.int32),
         positions=None,
         attn_state=None,
     )
+    target_group = SimpleNamespace(layer_names=["target"])
+    draft_group = SimpleNamespace(layer_names=["draft"])
+    draft_swa_group = SimpleNamespace(layer_names=["draft_swa"])
+    mixed_group = SimpleNamespace(layer_names=["target_shared", "draft"])
+    attn_groups = [[target_group, draft_group], [draft_swa_group], [mixed_group]]
 
     metadata = AscendMambaHybridModelState.prepare_attn(
         state,
@@ -355,19 +368,25 @@ def test_prepare_attn_keeps_actual_counts_separate_from_padding(mock_build_attn_
         cudagraph_mode=graph_mode,
         block_tables=(),
         slot_mappings=torch.empty(0, dtype=torch.int64),
-        attn_groups=[],
+        attn_groups=attn_groups,
         kv_cache_config=MagicMock(),
+        for_capture=for_capture,
     )
 
     assert metadata is expected_metadata
     kwargs = mock_build_attn_metadata.call_args.kwargs
+    assert attn_groups == [[target_group, draft_group], [draft_swa_group], [mixed_group]]
+    if skip_draft_groups:
+        assert kwargs["attn_groups"] == [[target_group], [], [mixed_group]]
+    else:
+        assert kwargs["attn_groups"] is attn_groups
     assert kwargs["num_actual_reqs"] == 2
     assert kwargs["num_actual_tokens"] == 2 * (num_spec + 1)
     graph_requests = 4 if graph_mode == CUDAGraphMode.FULL else 2
     assert kwargs["num_reqs"] == graph_requests
     assert kwargs["num_tokens"] == graph_requests * (num_spec + 1)
     model_metadata = kwargs["model_specific_attn_metadata"]
-    if num_spec:
+    if num_spec and not for_capture:
         assert model_metadata.num_decode_draft_tokens_cpu.tolist() == [num_spec] * graph_requests
         assert model_metadata.num_accepted_tokens.tolist() == [2, 3] + [1] * (graph_requests - 2)
     else:
