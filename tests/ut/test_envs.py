@@ -62,7 +62,11 @@ class TestEnvVariables(TestBase):
                 getattr(envs_ascend, var_name)
 
     def test_binary_env_vars_are_strict_and_disabled_by_default(self):
-        for name in ("VLLM_ASCEND_KVPOOL_RANGE_DEBUG", "VLLM_ASCEND_FA4_TARGET_ATTN"):
+        for name in (
+            "VLLM_ASCEND_KVPOOL_RANGE_DEBUG",
+            "VLLM_ASCEND_FA4_TARGET_ATTN",
+            "VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC",
+        ):
             original_val = os.environ.pop(name, None)
             try:
                 self.assertFalse(getattr(envs_ascend, name))

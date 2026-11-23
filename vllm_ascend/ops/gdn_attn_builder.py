@@ -88,7 +88,12 @@ def _remove_spec_graph_padding_queries(
     first_inactive = int(torch.nonzero(inactive, as_tuple=True)[0][0])
     if not torch.all(inactive[first_inactive:]).item():
         raise ValueError("GDN speculative graph padding must be a request suffix")
-    query_start_loc_cpu = common_attn_metadata.query_start_loc_cpu.clone()
+    query_start_loc_cpu = common_attn_metadata.query_start_loc_cpu
+    if query_start_loc_cpu[-1].item() == query_start_loc_cpu[first_inactive].item():
+        # AV's CPU boundaries can differ from the device's actual allocation.
+        # A zero-length suffix already meets the recurrent state's contract.
+        return common_attn_metadata
+    query_start_loc_cpu = query_start_loc_cpu.clone()
     query_start_loc_cpu[first_inactive + 1 :] = query_start_loc_cpu[first_inactive]
     return common_attn_metadata.replace(
         query_start_loc_cpu=query_start_loc_cpu,

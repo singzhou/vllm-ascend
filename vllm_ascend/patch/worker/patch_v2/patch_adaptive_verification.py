@@ -54,11 +54,11 @@ _original_factory = getattr(
 
 @wraps(_original_factory)
 def _maybe_create_adaptive_verification_manager(**kwargs):
-    # Preserve the ordinary path without a config lookup. An explicitly
-    # requested AV manager still requires a loaded confidence head.
+    # Preserve the ordinary path without a config lookup. The explicit
+    # AV validation lane requires AV to be enabled by the speculator.
     if not kwargs["enable_adaptive_verification"]:
         if envs_ascend.VLLM_ASCEND_DSPARK_EAGER_UPSTREAM_AV:
-            raise ValueError("The DSpark adaptive-verification lanes require a loaded confidence head")
+            raise ValueError("The explicit DSpark adaptive-verification lane requires an AV-enabled speculator")
         return _original_factory(**kwargs)
     config = kwargs.get("vllm_config")
     if config is None:

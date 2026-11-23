@@ -1013,10 +1013,29 @@ The draft head dimension can be 128 or 256. Both models require FP16/BF16 comput
 and unquantized NHD KV cache. The flag defaults to `0`. The draft defaults
 to FA4, and `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` still selects the Omni draft
 backend. When all target and draft groups consume device lengths, the runner
-skips the speculative KV length copy and host wait. Adaptive verification,
-pipeline/context parallelism, sparse offload and KV transfer use their existing
-paths. Check the startup log for
+skips the speculative KV length copy and host wait. Pipeline/context
+parallelism, sparse offload and KV transfer use their existing paths. Check the startup log for
 `Speculative CPU length synchronization bypass enabled: True`.
+
+For Qwen3.6/3.8 with DSpark adaptive verification, the same flag selects
+causal FA4 on the Ascend ragged decode path. Pass
+`-cc.cudagraph_mode=FULL_DECODE_ONLY` explicitly. Use a dense Qwen hybrid
+checkpoint with Mamba cache mode `align`, a DSpark checkpoint with a confidence
+head, and `DP=PP=PCP=DCP=1`. Include a decode capture size covering
+`max_num_seqs` within the decode token limit. Keep the Ascend AV adaptation
+enabled, leave eager execution and Xlite disabled, and set
+`VLLM_ASCEND_DSPARK_AV_GRAPH=ragged` or use its default. Leave the draft
+attention backend unset or set it to `CUSTOM`, which allows Ascend to select
+FA4 or the explicitly enabled FIA Sink. If the FA4 configuration checks fail,
+the platform retains the existing attention backend selection.
+
+With AV and target FA4 enabled, `VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC=0`
+(the default) keeps the speculative KV-count copy and the event wait in
+`_update_seq_lens_cpu`. Set it to `1` to bypass both after the runner validates
+the loaded draft, the initialized AV manager and the attention groups. Compare
+the two settings with the same target backend and graph configuration to measure
+the effect of the host length wait. Startup logs report target FA4 and the
+length bypass separately. The AV manager controls its own confidence transfers.
 
 After installing the wheel, validate eager accuracy and graph replay with changed
 KV lengths (head dimensions 128/256, FP16/BF16, and padded requests):

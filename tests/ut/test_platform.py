@@ -2587,10 +2587,34 @@ def test_parallel_draft_attention_backend_selection(mode, expected):
 
 @pytest.mark.parametrize(
     "blocker",
-    [None, "flag_off", "dcp", "av", "kv_quant", "target_head", "target_dtype", "draft_head", "draft_kv_quant"],
+    [
+        None,
+        "flag_off",
+        "dcp",
+        "kv_quant",
+        "target_head",
+        "target_dtype",
+        "draft_head",
+        "draft_kv_quant",
+        "av_ragged",
+        "av_upstream",
+        "av_uniform",
+        "av_piecewise",
+        "av_dp",
+        "av_cache_none",
+        "av_lmhead_tp",
+        "av_moe",
+        "av_capture_too_large",
+        "av_draft_backend",
+        "av_no_confidence_head",
+    ],
 )
 def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "0" if blocker == "flag_off" else "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_ADAPT", "0" if blocker == "av_upstream" else "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_GRAPH", "uniform" if blocker == "av_uniform" else "ragged")
+    use_av = bool(blocker and blocker.startswith("av_"))
+    expect_fa4 = blocker in (None, "av_ragged")
     target_head = 128 if blocker == "target_head" else 256
     target_dtype = torch.float32 if blocker == "target_dtype" else torch.bfloat16
     draft_head = 64 if blocker == "draft_head" else 128
@@ -2599,34 +2623,65 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     config = SimpleNamespace(
         use_v2_model_runner=True,
         model_config=SimpleNamespace(
-            architecture="Qwen3_5ForConditionalGeneration", get_head_size=lambda: target_head, dtype=target_dtype
+            architecture="Qwen3_5ForConditionalGeneration",
+            get_head_size=lambda: target_head,
+            dtype=target_dtype,
+            is_moe=blocker == "av_moe",
+            enforce_eager=False,
         ),
         speculative_config=SimpleNamespace(
+            method="dspark",
             use_dspark=lambda: True,
-            enable_adaptive_verification=blocker == "av",
-            draft_model_config=SimpleNamespace(get_head_size=lambda: draft_head, dtype=torch.bfloat16),
+            enable_adaptive_verification=use_av,
+            num_speculative_tokens=7,
+            draft_model_config=SimpleNamespace(
+                get_head_size=lambda: draft_head,
+                dtype=torch.bfloat16,
+                hf_config=SimpleNamespace(enable_confidence_head=blocker != "av_no_confidence_head"),
+            ),
+            attention_backend=AttentionBackendEnum.FLASH_ATTN if blocker == "av_draft_backend" else None,
             kv_cache_dtype=draft_kv_dtype,
         ),
         parallel_config=SimpleNamespace(
+            data_parallel_size=2 if blocker == "av_dp" else 1,
             pipeline_parallel_size=1,
             prefill_context_parallel_size=1,
             decode_context_parallel_size=2 if blocker == "dcp" else 1,
         ),
-        cache_config=SimpleNamespace(cache_dtype=target_kv_dtype),
+        cache_config=SimpleNamespace(
+            cache_dtype=target_kv_dtype, mamba_cache_mode="none" if blocker == "av_cache_none" else "align"
+        ),
         attention_config=SimpleNamespace(backend_per_kind={}),
+        compilation_config=SimpleNamespace(
+            cudagraph_mode=CUDAGraphMode.FULL_AND_PIECEWISE
+            if blocker == "av_piecewise"
+            else CUDAGraphMode.FULL_DECODE_ONLY,
+            cudagraph_capture_sizes=[8, 256] if blocker == "av_capture_too_large" else [8, 16],
+        ),
+        scheduler_config=SimpleNamespace(max_num_seqs=16),
+        uniform_decode_query_len=8,
         kv_transfer_config=None,
+        lora_config=None,
     )
     ascend_config = SimpleNamespace(
-        sparse_kv_offload_config=SimpleNamespace(enabled=False), kvpp_config=SimpleNamespace(size=1)
+        sparse_kv_offload_config=SimpleNamespace(enabled=False),
+        kvpp_config=SimpleNamespace(size=1),
+        xlite_graph_config=SimpleNamespace(enabled=False),
+        finegrained_tp_config=SimpleNamespace(lmhead_tensor_parallel_size=2 if blocker == "av_lmhead_tp" else 0),
     )
     selector = AttentionSelectorConfig(
-        head_size=target_head, dtype=target_dtype, kv_cache_dtype=target_kv_dtype, block_size=None
+        head_size=target_head,
+        dtype=target_dtype,
+        kv_cache_dtype=target_kv_dtype,
+        block_size=None,
+        use_adaptive_verification=use_av,
     )
     draft_selector = selector._replace(
         head_size=draft_head,
         dtype=torch.bfloat16,
         kv_cache_dtype=draft_kv_dtype or target_kv_dtype,
         use_non_causal=True,
+        use_adaptive_verification=False,
     )
     with (
         patch.object(fa4_v1, "_FA4_ENABLED", False),
@@ -2639,14 +2694,88 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     ):
         _configure_fa4_target_attention(config, ascend_config)
         selected = config.attention_config.backend_per_kind.get(KVCacheSpecKind.FULL_ATTENTION.value)
-        if blocker is None:
+        if expect_fa4:
             assert selected is AttentionBackendEnum.CUSTOM
         else:
             assert selected is None
         target = NPUPlatform.get_attn_backend_cls(selected, selector)
         draft = NPUPlatform.get_attn_backend_cls(selected, draft_selector)
-    if blocker is None:
+    if expect_fa4:
         assert target.endswith(".AscendFA4TargetBackend")
         assert draft.endswith(".AscendFA4Backend")
     else:
         assert target == draft == "vllm_ascend.attention.attention_v1.AscendAttentionBackend"
+
+
+@pytest.mark.parametrize(
+    "max_num_batched_tokens,enforce_eager,xlite,expected_sizes,expected_backend",
+    [
+        (64, False, False, [8, 32], AttentionBackendEnum.CUSTOM),
+        (16, False, False, [8], None),
+        (64, True, False, [], None),
+        (64, False, True, [], None),
+    ],
+)
+def test_fa4_av_routing_uses_final_platform_config(
+    monkeypatch, max_num_batched_tokens, enforce_eager, xlite, expected_sizes, expected_backend
+):
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_ADAPT", "1")
+    monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_GRAPH", "ragged")
+    config = TestNPUPlatform.mock_vllm_config()
+    config.use_v2_model_runner = True
+    config.model_config.architecture = "Qwen3_5ForCausalLM"
+    config.model_config.get_head_size.return_value = 256
+    config.model_config.dtype = torch.bfloat16
+    config.model_config.is_moe = False
+    config.model_config.enforce_eager = enforce_eager
+    config.parallel_config.worker_cls = "manual"
+    config.parallel_config.enable_dbo = False
+    config.cache_config.cache_dtype = "auto"
+    config.cache_config.mamba_cache_mode = "align"
+    config.attention_config.backend_per_kind = {}
+    config.lora_config = None
+    config.scheduler_config.max_num_seqs = 16
+    config.scheduler_config.max_num_batched_tokens = max_num_batched_tokens
+    config.uniform_decode_query_len = 8
+    config.speculative_config = SimpleNamespace(
+        method="dspark",
+        use_dspark=lambda: True,
+        uses_dynamic_speculative_decoding=lambda: False,
+        enable_adaptive_verification=True,
+        enforce_eager=None,
+        num_speculative_tokens=7,
+        attention_backend=AttentionBackendEnum.CUSTOM,
+        kv_cache_dtype=None,
+        draft_model_config=SimpleNamespace(
+            get_head_size=lambda: 128,
+            dtype=torch.bfloat16,
+            hf_config=SimpleNamespace(enable_confidence_head=True),
+        ),
+    )
+    config.compilation_config = CompilationConfig(
+        mode=CompilationMode.VLLM_COMPILE,
+        cudagraph_mode=CUDAGraphMode.FULL_DECODE_ONLY,
+        cudagraph_capture_sizes=[8, 32],
+    )
+    config._set_cudagraph_sizes = lambda: VllmConfig._set_cudagraph_sizes(config)
+    ascend_config = TestNPUPlatform.mock_vllm_ascend_config()
+    ascend_config.enable_dsa_cp = False
+    ascend_config.kvpp_config.size = 1
+    ascend_config.sparse_kv_offload_config.enabled = False
+    ascend_config.finegrained_tp_config.lmhead_tensor_parallel_size = 0
+    ascend_config.xlite_graph_config.enabled = xlite
+    with (
+        patch("vllm_ascend.quantization.utils.maybe_auto_detect_quantization"),
+        patch("vllm_ascend.platform.init_ascend_config", return_value=ascend_config),
+        patch("vllm_ascend.platform.refresh_block_size"),
+        patch("vllm_ascend.platform.enable_sp", return_value=False),
+        patch("vllm_ascend.platform.envs_vllm.VLLM_KV_CACHE_LAYOUT", "NHD"),
+        patch(
+            "vllm_ascend.platform.get_current_hardware_profile", return_value=get_hardware_profile(AscendDeviceType.A2)
+        ),
+    ):
+        NPUPlatform.check_and_update_config(config)
+
+    assert config.compilation_config.cudagraph_capture_sizes == expected_sizes
+    assert config.attention_config.backend_per_kind.get(KVCacheSpecKind.FULL_ATTENTION.value) is expected_backend

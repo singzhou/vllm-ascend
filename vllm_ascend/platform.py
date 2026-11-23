@@ -586,7 +586,6 @@ class NPUPlatform(Platform):
         ascend_config = init_ascend_config(vllm_config)
         _validate_deepseek_v4_tp_config(vllm_config, ascend_config)
         _check_ascend_config(vllm_config, ascend_config)
-        _configure_fa4_target_attention(vllm_config, ascend_config)
 
         # 6.Update compilation / cudagraph modes (ascend_config -> vllm_config).
         _update_compilation_modes(vllm_config, ascend_config)
@@ -598,6 +597,7 @@ class NPUPlatform(Platform):
             enable_shared_expert_dp=ascend_config.enable_shared_expert_dp,
             enable_dsa_cp=ascend_config.enable_dsa_cp,
         )
+        _configure_fa4_target_attention(vllm_config, ascend_config)
 
         # 8.Setup worker class, custom ops and scheduler (ascend_config -> vllm_config).
         _setup_worker_and_scheduler(vllm_config, ascend_config)
@@ -809,7 +809,6 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         or model.dtype not in supported_dtypes
         or spec is None
         or not spec.use_dspark()
-        or spec.enable_adaptive_verification
         or spec.draft_model_config is None
         or spec.draft_model_config.get_head_size() not in (128, 256)
         or spec.draft_model_config.dtype not in supported_dtypes
@@ -824,6 +823,61 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         or envs_vllm.VLLM_KV_CACHE_LAYOUT in ("LBHNC", "HND")
     ):
         return
+
+    if spec.enable_adaptive_verification:
+        from vllm.config.compilation import CUDAGraphMode
+
+        from vllm_ascend.worker.v2.spec_decode.dspark.av_config import (
+            GRAPH_MODE_RAGGED,
+            adaptive_verification_enabled,
+            av_graph_mode,
+        )
+
+        compilation = vllm_config.compilation_config
+        if (
+            model.is_moe
+            or parallel.data_parallel_size != 1
+            or vllm_config.cache_config.mamba_cache_mode != "align"
+            or compilation.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY
+            or model.enforce_eager
+            or ascend_config.xlite_graph_config.enabled
+            or ascend_config.finegrained_tp_config.lmhead_tensor_parallel_size > 0
+            or not adaptive_verification_enabled(vllm_config)
+            or av_graph_mode() != GRAPH_MODE_RAGGED
+        ):
+            logger.info_once(
+                "Skipping FA4 target attention with DSpark adaptive verification. It requires a dense Qwen hybrid "
+                "with Mamba cache align, DP=1, LM head TP disabled, and Ascend ragged FULL_DECODE_ONLY "
+                "without eager execution or Xlite."
+            )
+            return
+
+        max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+        max_decode_tokens = max_num_seqs * vllm_config.uniform_decode_query_len
+        # The graph manager only captures ragged decode buckets within the decode token limit.
+        if not any(max_num_seqs <= size <= max_decode_tokens for size in compilation.cudagraph_capture_sizes or ()):
+            logger.info_once(
+                "Skipping FA4 target attention with DSpark adaptive verification. "
+                "A decode graph capture size between %d and %d tokens is required.",
+                max_num_seqs,
+                max_decode_tokens,
+            )
+            return
+
+        # The per-kind override below also reaches the draft, where it takes precedence over the global backend.
+        if spec.attention_backend not in (None, AttentionBackendEnum.CUSTOM):
+            logger.info_once(
+                "Skipping FA4 target attention with DSpark adaptive verification because the draft requests %s. "
+                "Use the default draft backend or CUSTOM for Ascend FA4/FIA Sink selection.",
+                spec.attention_backend,
+            )
+            return
+        if not getattr(spec.draft_model_config.hf_config, "enable_confidence_head", False):
+            logger.info_once(
+                "Skipping FA4 target attention with DSpark adaptive verification because the draft checkpoint "
+                "configuration does not enable a confidence head."
+            )
+            return
 
     # Carry the opt-in through vLLM's memoized selector. DSpark copies this
     # per-kind configuration into its draft config, with use_non_causal set.
