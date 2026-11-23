@@ -15,7 +15,7 @@
 # limitations under the License.
 # This file is a part of the vllm-ascend project.
 #
-"""FA4 AICPU tiling for non-causal parallel-drafting (DSpark / DFlash).
+"""FA4 AICPU tiling for parallel drafting and causal DSpark verification.
 
 VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=2 selects this backend.
 Metadata and attention are captured together so replay reads the rejected-token
@@ -29,8 +29,10 @@ from types import ModuleType
 import torch
 from vllm.forward_context import get_forward_context
 from vllm.logger import logger
+from vllm.v1.attention.backend import AttentionType
 
 import vllm_ascend.envs as envs_ascend
+from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 from vllm_ascend.attention.attention_v1 import (
     AscendAttentionBackend,
     AscendAttentionBackendImpl,
@@ -38,8 +40,10 @@ from vllm_ascend.attention.attention_v1 import (
     AscendMetadata,
 )
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
+from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import attention_transfer_window
 
 _FA4_META_CACHE_ATTR = "_ascend_fa4_meta_cache"
+_FA4_PAGE_TABLE_CACHE_ATTR = "_ascend_fa4_page_table_cache"
 _FA4_ENABLED = envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK == 2
 
 
@@ -70,6 +74,25 @@ def fa4_selected(attn_selector_config: object) -> bool:
     )
 
 
+def fa4_target_compatible(config) -> bool:
+    """Check the cached selector key for the Qwen target and DSpark draft."""
+    return (
+        config.attn_type == AttentionType.DECODER
+        and config.head_size in ((128, 256) if config.use_non_causal else (256,))
+        and config.dtype in (torch.float16, torch.bfloat16)
+        and config.kv_cache_dtype in (None, "auto", "bfloat16", "float16")
+        and not config.has_sliding_window
+        and not config.has_sink
+        and not config.use_mm_prefix
+        and not config.use_per_head_quant_scales
+        and not config.use_batch_invariant
+        and not config.use_kv_connector
+        and not config.use_dcp
+        and not config.use_adaptive_verification
+        and not config.use_rswa
+    )
+
+
 def _build_fa4_seq_tensors(num_tokens: int, seq_lens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     num_reqs = seq_lens.shape[0]
     if num_reqs <= 0 or num_tokens <= 0 or num_tokens % num_reqs:
@@ -84,7 +107,11 @@ def _build_fa4_seq_tensors(num_tokens: int, seq_lens: torch.Tensor) -> tuple[tor
 
 
 def _fa4_cache_views(
-    key: torch.Tensor, value: torch.Tensor, block_table: torch.Tensor
+    key: torch.Tensor,
+    value: torch.Tensor,
+    block_table: torch.Tensor,
+    *,
+    forward_context: object | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Encode block strides as virtual FA4 page IDs without moving shared KV.
 
@@ -117,7 +144,19 @@ def _fa4_cache_views(
     # Each view ends at the last logical page, staying inside its raw storage.
     shape = ((num_blocks - 1) * stride_factor + 1, block_size, num_heads, head_size)
     strides = (page_elements, *inner_strides)
-    return key.as_strided(shape, strides), value.as_strided(shape, strides), (block_table * stride_factor).contiguous()
+    if forward_context is None:
+        virtual_page_table = (block_table * stride_factor).contiguous()
+    else:
+        # Layers can share page IDs while keeping separate K/V allocations.
+        page_tables = getattr(forward_context, _FA4_PAGE_TABLE_CACHE_ATTR, None)
+        if page_tables is None:
+            page_tables = {}
+            setattr(forward_context, _FA4_PAGE_TABLE_CACHE_ATTR, page_tables)
+        table_key = (block_table.data_ptr(), block_table.shape, block_table.stride(), stride_factor)
+        if table_key not in page_tables:
+            page_tables[table_key] = (block_table * stride_factor).contiguous()
+        virtual_page_table = page_tables[table_key]
+    return key.as_strided(shape, strides), value.as_strided(shape, strides), virtual_page_table
 
 
 class AscendFA4MetadataBuilder(AscendAttentionMetadataBuilder):
@@ -152,6 +191,8 @@ class AscendFA4MetadataBuilder(AscendAttentionMetadataBuilder):
 class AscendFA4Impl(AscendAttentionBackendImpl):
     """Run FA4 against the shared paged KV cache without host length reads."""
 
+    supports_causal_fa4 = False
+
     def forward_fused_infer_attention(
         self,
         query: torch.Tensor,
@@ -161,33 +202,56 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
         output: torch.Tensor,
         kv_cache=None,
     ):
-        if attn_metadata.causal:
+        causal = attn_metadata.causal
+        if causal and not self.supports_causal_fa4:
             return super().forward_fused_infer_attention(query, key, value, attn_metadata, output, kv_cache)
-        if self.key_cache is None and kv_cache is not None:
+        if self.key_cache is None and kv_cache is not None and len(kv_cache) >= 2:
             self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
-        if self.key_cache is None or self.value_cache is None:
-            raise RuntimeError("FA4 draft attention requires a paged KV cache.")
         if self.use_bnsd_kv_cache:
-            raise RuntimeError("FA4 draft attention requires NHD KV cache layout.")
+            raise RuntimeError("FA4 requires NHD KV cache layout.")
 
         fa4 = _load_fa4()
         num_tokens = attn_metadata.num_actual_tokens
-        num_reqs = attn_metadata.seq_lens.shape[0]
-        block_table = attn_metadata.block_tables
-        if block_table.shape[0] < num_reqs:
-            raise RuntimeError("FA4 block table has fewer rows than requests.")
-        # FA4's kernel uses a packed row stride derived from max_seqlen_k.
-        key_cache, value_cache, block_table = _fa4_cache_views(self.key_cache, self.value_cache, block_table[:num_reqs])
-        block_size = self.key_cache.shape[1]
-        max_seqlen_k = block_table.shape[1] * block_size
+        seq_lens = attn_metadata.seq_lens
+        num_reqs = seq_lens.shape[0]
+        cu_seqlens_q = attn_metadata.query_start_loc if causal else None
+        max_seqlen_q = attn_metadata.max_query_len if causal else num_tokens // max(num_reqs, 1)
+        context = None
+        if self.key_cache is not None and self.value_cache is not None:
+            block_table = attn_metadata.block_tables
+            if block_table.shape[0] < num_reqs:
+                raise RuntimeError("FA4 block table has fewer rows than requests.")
+            # FA4's kernel uses a packed row stride derived from max_seqlen_k.
+            if causal and not self.key_cache.is_contiguous():
+                context = get_forward_context()
+            key, value, block_table = _fa4_cache_views(
+                self.key_cache,
+                self.value_cache,
+                block_table[:num_reqs],
+                forward_context=context,
+            )
+            block_size = self.key_cache.shape[1]
+            max_seqlen_k = block_table.shape[1] * block_size
+        else:
+            if not causal or key is None or value is None:
+                raise RuntimeError("FA4 requires a paged KV cache or dense causal Q/K/V.")
+            key = key[:num_tokens].reshape(num_tokens, self.num_kv_heads, self.head_size).contiguous()
+            value = value[:num_tokens].reshape(num_tokens, self.num_kv_heads, self.head_size).contiguous()
+            block_table = None
+            block_size = None
+            max_seqlen_k = max_seqlen_q
         # Q may be a strided view of a fused QKV projection. FA4 uses packed TND.
         query = query[:num_tokens].reshape(num_tokens, self.num_heads, self.head_size).contiguous()
+        dense_kv_offsets = {"cu_seqlens_k": cu_seqlens_q} if block_table is None else {}
 
         # Share conversions and AICPU metadata within this forward only. Include
         # scale, dtype and page capacity: they affect tiling even for equal heads.
         cache_key = (
-            attn_metadata.seq_lens.data_ptr(),
-            attn_metadata.seq_lens.stride(),
+            seq_lens.data_ptr(),
+            seq_lens.stride(),
+            causal,
+            cu_seqlens_q.data_ptr() if cu_seqlens_q is not None else None,
+            max_seqlen_q,
             num_tokens,
             num_reqs,
             self.num_heads,
@@ -199,44 +263,57 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
             query.device,
             self.scale,
         )
-        context = get_forward_context()
+        if context is None:
+            context = get_forward_context()
         cache = getattr(context, _FA4_META_CACHE_ATTR, None)
         if cache is None:
             cache = {}
             setattr(context, _FA4_META_CACHE_ATTR, cache)
         if cache_key not in cache:
-            cu_seqlens_q, cache_seqlens = _build_fa4_seq_tensors(num_tokens, attn_metadata.seq_lens)
+            if causal:
+                cache_seqlens = seq_lens.to(torch.int32) if block_table is not None else None
+            else:
+                cu_seqlens_q, cache_seqlens = _build_fa4_seq_tensors(num_tokens, seq_lens)
             scheduler_metadata = fa4.get_scheduler_metadata(
-                max_seqlen_q=num_tokens // num_reqs,
+                max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
                 nheads=self.num_heads,
                 nheads_kv=self.num_kv_heads,
                 headdim=self.head_size,
                 seqused_k=cache_seqlens,
                 cu_seqlens_q=cu_seqlens_q,
-                causal=False,
+                causal=causal,
                 window_size_left=-1,
                 window_size_right=-1,
                 num_splits=0,
+                **dense_kv_offsets,
             )
-            cache[cache_key] = cu_seqlens_q, cache_seqlens, scheduler_metadata
-        cu_seqlens_q, cache_seqlens, scheduler_metadata = cache[cache_key]
+            padding_queries = None
+            if causal and _EXTRA_CTX.capturing:
+                # FA4 doesn't write the unused tail of the captured Q buffer.
+                token_indices = torch.arange(num_tokens, dtype=torch.int32, device=query.device)
+                padding_queries = token_indices >= cu_seqlens_q[-1]
+            cache[cache_key] = cu_seqlens_q, cache_seqlens, scheduler_metadata, padding_queries
+        cu_seqlens_q, cache_seqlens, scheduler_metadata, padding_queries = cache[cache_key]
         attn_output = fa4.flash_attn_varlen_func(
             query,
-            key_cache,
-            value_cache,
+            key,
+            value,
             cu_seqlens_q=cu_seqlens_q,
             seqused_k=cache_seqlens,
             page_table=block_table,
-            max_seqlen_q=num_tokens // num_reqs,
+            max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
             softmax_scale=self.scale,
-            causal=False,
+            causal=causal,
             window_size=(-1, -1),
             scheduler_metadata=scheduler_metadata,
             num_splits=0,
             return_lse=False,
+            **dense_kv_offsets,
         )
+        if padding_queries is not None:
+            attn_output.masked_fill_(padding_queries[:, None, None], 0)
         output[:num_tokens] = attn_output.view(num_tokens, self.num_heads, self.head_size)
         return output
 
@@ -249,3 +326,36 @@ class AscendFA4Backend(AscendAttentionBackend):
     @staticmethod
     def get_builder_cls() -> type["AscendFA4MetadataBuilder"]:
         return AscendFA4MetadataBuilder
+
+
+class AscendFA4TargetMetadataBuilder(AscendAttentionMetadataBuilder):
+    requires_attention_mask = False
+
+    def __init__(self, kv_cache_spec, layer_names, vllm_config, device):
+        super().__init__(kv_cache_spec, layer_names, vllm_config, device)
+        _load_fa4()
+        logger.info("Ascend causal FA4 selected for %d target attention layer(s): %s", len(layer_names), layer_names)
+
+    def _select_seq_lens(self, common_attn_metadata: AscendCommonAttentionMetadata) -> torch.Tensor:
+        return common_attn_metadata.seq_lens
+
+    def _build_fia_seq_inputs(self, common_attn_metadata, num_reqs, query_start_loc_cpu, seq_lens, block_table):
+        return common_attn_metadata.query_start_loc[: num_reqs + 1], None, None, seq_lens, block_table
+
+
+class AscendFA4TargetImpl(AscendFA4Impl):
+    supports_causal_fa4 = True
+
+    def forward_impl(self, query, key, value, kv_cache, attn_metadata, output):
+        with attention_transfer_window():
+            return self.forward_fused_infer_attention(query, key, value, attn_metadata, output, kv_cache)
+
+
+class AscendFA4TargetBackend(AscendFA4Backend):
+    @staticmethod
+    def get_impl_cls() -> type[AscendFA4TargetImpl]:
+        return AscendFA4TargetImpl
+
+    @staticmethod
+    def get_builder_cls() -> type[AscendFA4TargetMetadataBuilder]:
+        return AscendFA4TargetMetadataBuilder

@@ -54,6 +54,7 @@ class AscendModelState(DefaultModelState):
     kvpp_runtime: "KVPPRuntime | None" = None
     kvpp_is_dummy_run: bool = False
     device_metadata: "TargetDeviceMetadata | None" = None
+    draft_attn_layer_names_to_skip: frozenset[str] = frozenset()
 
     def finish_execution(self, *, failed: bool) -> None:
         """Join auxiliary metadata work even if input preparation failed."""
@@ -175,6 +176,15 @@ class AscendModelState(DefaultModelState):
             return prepare_engram_graph_inputs(num_tokens)
         return {}
 
+    def _target_attention_groups(self, attn_groups: list[list[AttentionGroup]]) -> list[list[AttentionGroup]]:
+        if not (draft_layer_names := self.draft_attn_layer_names_to_skip):
+            return attn_groups
+        # DSpark builds its own draft metadata. Keep the KV cache group
+        # indices used to address block tables and slot mappings.
+        return [
+            [group for group in groups if not draft_layer_names.issuperset(group.layer_names)] for groups in attn_groups
+        ]
+
     def prepare_attn(
         self,
         input_batch: AscendInputBatch,
@@ -285,7 +295,7 @@ class AscendModelState(DefaultModelState):
         if self.device_metadata is not None:
             build_metadata = partial(self.device_metadata.run_build, build_attn_metadata)
         self.attn_metadata = build_metadata(
-            attn_groups=attn_groups,
+            attn_groups=self._target_attention_groups(attn_groups),
             num_reqs=num_reqs,
             num_actual_reqs=num_actual_reqs,
             num_tokens=num_input_tokens,
