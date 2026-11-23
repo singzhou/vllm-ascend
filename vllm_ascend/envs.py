@@ -162,6 +162,11 @@ env_variables: dict[str, Callable[[], Any]] = {
     # them. The default draft backend in this mode is FA4; an explicit FIA
     # sink selection is still honored. Valid values: 0 (default), 1. Not sensitive.
     "VLLM_ASCEND_FA4_TARGET_ATTN": lambda: _strict_binary_env("VLLM_ASCEND_FA4_TARGET_ATTN"),
+    # Also bypass the speculative host KV-count snapshot on the verified
+    # FA4 target + DSpark adaptive verification lane. Keep the snapshot by
+    # default so backend and snapshot changes can be validated independently.
+    # Valid values: 0 (default), 1. Not sensitive.
+    "VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC": lambda: _strict_binary_env("VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC"),
 }
 
 # end-env-vars-definition

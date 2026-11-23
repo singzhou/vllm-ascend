@@ -88,7 +88,7 @@ def fa4_target_compatible(config) -> bool:
         and not config.use_batch_invariant
         and not config.use_kv_connector
         and not config.use_dcp
-        and not config.use_adaptive_verification
+        and not (config.use_non_causal and config.use_adaptive_verification)
         and not config.use_rswa
     )
 
@@ -352,6 +352,10 @@ class AscendFA4TargetImpl(AscendFA4Impl):
 
 
 class AscendFA4TargetBackend(AscendFA4Backend):
+    @classmethod
+    def supports_device_cpu_query_lens_mismatch(cls) -> bool:
+        return True
+
     @staticmethod
     def get_impl_cls() -> type[AscendFA4TargetImpl]:
         return AscendFA4TargetImpl

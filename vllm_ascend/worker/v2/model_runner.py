@@ -153,6 +153,7 @@ class NPUModelRunner(GPUModelRunner):
     kv_connector: KVConnector
     max_num_reqs: int
     _use_fa4_target_attention = False
+    _use_fa4_adaptive_verification = False
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         # Keep exact host counts until all active consumers are known.
@@ -440,6 +441,7 @@ class NPUModelRunner(GPUModelRunner):
         # Reinitialization can change the active attention backends.
         self._skip_spec_cpu_length_sync = False
         self._use_fa4_target_attention = False
+        self._use_fa4_adaptive_verification = False
         # Match V1's physical buffer plan without mutating the scheduler's
         # logical cache configuration. Allocation must honor zero-stride aliases.
         kv_cache_config = deepcopy(kv_cache_config)
@@ -555,6 +557,12 @@ class NPUModelRunner(GPUModelRunner):
                 AscendGDNFusedAttentionBackend,
                 AscendGDNHostMetadataBackend,
             }
+            if AscendFA4TargetBackend in target_backends and getattr(
+                self.speculative_config, "enable_adaptive_verification", False
+            ):
+                self._validate_fa4_adaptive_verification()
+                self._use_fa4_adaptive_verification = True
+                logger.info("FA4 target attention enabled for ragged DSpark adaptive verification.")
 
         # Legacy (pre-AuxOutput) R3 path; the getattr keeps MRv2 startable on a
         # vLLM lane where ModelConfig no longer exposes the flag.
@@ -570,7 +578,8 @@ class NPUModelRunner(GPUModelRunner):
         self._skip_spec_cpu_length_sync = self._can_skip_spec_cpu_length_sync()
         self.model_state.draft_attn_layer_names_to_skip = (
             frozenset(draft_layer_names)
-            if self._use_fa4_target_attention and self._skip_spec_cpu_length_sync
+            if self._use_fa4_adaptive_verification
+            or (self._use_fa4_target_attention and self._skip_spec_cpu_length_sync)
             else frozenset()
         )
         logger.info("Speculative CPU length synchronization bypass enabled: %s", self._skip_spec_cpu_length_sync)
@@ -1307,6 +1316,27 @@ class NPUModelRunner(GPUModelRunner):
         # counters. K3's non-MLA attention uses the KDA device-length path.
         return all_mla_use_flashmla(self.model)
 
+    def _validate_fa4_adaptive_verification(self) -> None:
+        from vllm_ascend.worker.v2.spec_decode.dspark.adaptive_verification import AscendAdaptiveVerificationManager
+
+        graph = self.cudagraph_manager
+        if (
+            not self._use_fa4_target_attention
+            or not isinstance(self.adaptive_verification, AscendAdaptiveVerificationManager)
+            or not getattr(self.speculator, "use_confidence_head", False)
+            or graph.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY
+            or not getattr(graph, "av_refuse_impure_batches", False)
+            or not graph.varlen_decode
+            or max(graph.capture_sizes, default=0) < self.max_num_reqs
+            or not self._fa4_draft_attention_uses_device_lengths()
+        ):
+            raise ValueError(
+                "FA4 target attention with DSpark adaptive verification requires a loaded confidence head, "
+                "the Ascend ragged FULL_DECODE_ONLY manager with a capture size covering max_num_seqs, "
+                "and compatible target and draft attention backends. Set VLLM_ASCEND_FA4_TARGET_ATTN=0 "
+                "to use the ordinary adaptive verification path."
+            )
+
     def _can_skip_fa4_target_cpu_length_sync(self) -> bool:
         parallel = self.vllm_config.parallel_config
         if (
@@ -1315,13 +1345,18 @@ class NPUModelRunner(GPUModelRunner):
             or parallel.pipeline_parallel_size != 1
             or parallel.prefill_context_parallel_size != 1
             or parallel.decode_context_parallel_size != 1
-            or self.adaptive_verification is not None
             or self.vllm_config.kv_transfer_config is not None
             or self.ascend_config.sparse_kv_offload_config.enabled
             or self.ascend_config.kvpp_config.size != 1
         ):
             return False
+        if self.adaptive_verification is not None and not (
+            self._use_fa4_adaptive_verification and envs_ascend.VLLM_ASCEND_FA4_AV_SKIP_CPU_LENGTH_SYNC
+        ):
+            return False
+        return self._fa4_draft_attention_uses_device_lengths()
 
+    def _fa4_draft_attention_uses_device_lengths(self) -> bool:
         group_causal = self.speculator._group_causal
         draft_groups = [group for groups in self.speculator.attn_groups for group in groups]
         return bool(draft_groups) and all(
