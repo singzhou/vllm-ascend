@@ -157,6 +157,11 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Both custom backends keep seq_lens on device and tile on AICPU.
     # Valid values: 0/1/2. Not sensitive.
     "VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK": lambda: int(os.getenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0")),
+    # Use causal FA4 for Qwen3.6/DSpark target attention on MRV2 (Ascend910).
+    # Enables device-only KV lengths when all active attention paths support
+    # them. The default draft backend in this mode is FA4; an explicit FIA
+    # sink selection is still honored. Valid values: 0 (default), 1. Not sensitive.
+    "VLLM_ASCEND_FA4_TARGET_ATTN": lambda: _strict_binary_env("VLLM_ASCEND_FA4_TARGET_ATTN"),
 }
 
 # end-env-vars-definition

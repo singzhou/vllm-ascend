@@ -28,6 +28,8 @@ import vllm.envs as envs_vllm
 from vllm.logger import logger
 from vllm.platforms import Platform, PlatformEnum
 
+from vllm_ascend import envs as envs_ascend
+
 # todo: please remove it when solve cuda hard code in vllm
 os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
@@ -319,13 +321,23 @@ class NPUPlatform(Platform):
         # what follows from it. VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK selects
         # ordinary attention (0), omni FIA sink (1), or FA4 (2).
         if key == (False, False) and not attn_selector_config.use_pcp:
-            from vllm_ascend.attention.fa4_v1 import fa4_selected
+            from vllm.v1.attention.backends.registry import AttentionBackendEnum
+
+            from vllm_ascend.attention.fa4_v1 import fa4_selected, fa4_target_compatible
             from vllm_ascend.attention.fia_sink_v1 import fia_sink_selected
 
             if fia_sink_selected(attn_selector_config):
                 return "vllm_ascend.attention.fia_sink_v1.AscendFIASinkBackend"
             if fa4_selected(attn_selector_config):
                 return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
+            if (
+                envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN
+                and selected_backend is AttentionBackendEnum.CUSTOM
+                and fa4_target_compatible(attn_selector_config)
+            ):
+                if attn_selector_config.use_non_causal:
+                    return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
+                return "vllm_ascend.attention.fa4_v1.AscendFA4TargetBackend"
 
         if attn_selector_config.use_pcp:
             pcp_backend_map = {
@@ -574,6 +586,7 @@ class NPUPlatform(Platform):
         ascend_config = init_ascend_config(vllm_config)
         _validate_deepseek_v4_tp_config(vllm_config, ascend_config)
         _check_ascend_config(vllm_config, ascend_config)
+        _configure_fa4_target_attention(vllm_config, ascend_config)
 
         # 6.Update compilation / cudagraph modes (ascend_config -> vllm_config).
         _update_compilation_modes(vllm_config, ascend_config)
@@ -768,6 +781,57 @@ def _configure_minimax_m3_a5_mixed_kv_cache(vllm_config: VllmConfig) -> None:
         ", ".join(gqa_layer_ids),
         cache_config.cache_dtype,
     )
+
+
+def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: AscendConfig) -> None:
+    if not envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN:
+        return
+
+    from vllm.v1.attention.backends.registry import AttentionBackendEnum
+    from vllm.v1.kv_cache_interface import KVCacheSpecKind
+
+    model = vllm_config.model_config
+    spec = vllm_config.speculative_config
+    parallel = vllm_config.parallel_config
+    supported_dtypes = (torch.float16, torch.bfloat16)
+    supported_cache_dtypes = ("auto", "float16", "bfloat16")
+    if (
+        not get_current_hardware_profile().supports(HardwareCapability.FA4_CAUSAL_DEVICE_LENGTHS)
+        or not vllm_config.use_v2_model_runner
+        or model.architecture
+        not in {
+            "Qwen3_5ForCausalLM",
+            "Qwen3_5ForConditionalGeneration",
+            "Qwen3_5MoeForCausalLM",
+            "Qwen3_5MoeForConditionalGeneration",
+        }
+        or model.get_head_size() != 256
+        or model.dtype not in supported_dtypes
+        or spec is None
+        or not spec.use_dspark()
+        or spec.enable_adaptive_verification
+        or spec.draft_model_config is None
+        or spec.draft_model_config.get_head_size() not in (128, 256)
+        or spec.draft_model_config.dtype not in supported_dtypes
+        or (spec.kv_cache_dtype is not None and spec.kv_cache_dtype not in supported_cache_dtypes)
+        or parallel.pipeline_parallel_size != 1
+        or parallel.prefill_context_parallel_size != 1
+        or parallel.decode_context_parallel_size != 1
+        or vllm_config.kv_transfer_config is not None
+        or vllm_config.cache_config.cache_dtype not in supported_cache_dtypes
+        or ascend_config.sparse_kv_offload_config.enabled
+        or ascend_config.kvpp_config.size != 1
+        or envs_vllm.VLLM_KV_CACHE_LAYOUT in ("LBHNC", "HND")
+    ):
+        return
+
+    # Carry the opt-in through vLLM's memoized selector. DSpark copies this
+    # per-kind configuration into its draft config, with use_non_causal set.
+    backends = vllm_config.attention_config.backend_per_kind
+    vllm_config.attention_config.backend_per_kind = {
+        **backends,
+        KVCacheSpecKind.FULL_ATTENTION.value: AttentionBackendEnum.CUSTOM,
+    }
 
 
 def _fix_incompatible_config(vllm_config: VllmConfig) -> None:

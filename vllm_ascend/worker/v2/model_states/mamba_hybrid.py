@@ -339,7 +339,7 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,
         )
         self.attn_metadata = build_attn_metadata(
-            attn_groups=attn_groups,
+            attn_groups=self._target_attention_groups(attn_groups),
             num_reqs=num_reqs,
             num_actual_reqs=input_batch.num_reqs,
             num_tokens=num_tokens,
@@ -355,6 +355,7 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             dcp_local_seq_lens=input_batch.dcp_local_seq_lens,
             parallel_config=self.vllm_config.parallel_config,
             seq_lens_np=input_batch.seq_lens_np,
+            seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound,
             positions=input_batch.positions,
             attn_state=input_batch.attn_state,
             model_specific_attn_metadata=model_specific_metadata,

@@ -12,9 +12,10 @@ from vllm.model_executor.layers.attention import MLAAttention
 from vllm.model_executor.layers.linear import UnquantizedLinearMethod
 from vllm.model_executor.offloader.base import NoopOffloader
 from vllm.sequence import IntermediateTensors
-from vllm.v1.kv_cache_interface import KVCacheConfig
+from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig
 from vllm.v1.worker.gpu import model_runner as vllm_model_runner
 from vllm.v1.worker.gpu.model_runner import BatchReqState, GPUModelRunner
+from vllm.v1.worker.utils import AttentionGroup
 
 from vllm_ascend.ascend_forward_context import MoECommType
 from vllm_ascend.attention.attention_c8_mxfp import (
@@ -23,6 +24,9 @@ from vllm_ascend.attention.attention_c8_mxfp import (
     mxfp_paged_cache_views,
     mxfp_v_scale_cache_shape,
 )
+from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend
+from vllm_ascend.attention.fia_sink_v1 import AscendFIASinkBackend
 from vllm_ascend.attention.mla_v1 import AscendMLAImpl
 from vllm_ascend.worker.v2.input_batch import AscendInputBatch, AscendInputBuffers
 from vllm_ascend.worker.v2.model_runner import NPUModelRunner
@@ -1229,8 +1233,10 @@ def test_initialize_kv_cache_installs_aclgraph_factory_and_pcp(a5, architecture)
     runner.init_routed_experts_capturer.assert_called_once_with()
 
 
-def test_initialize_kv_cache_forwards_allocation_context():
-    """Forward allocation context before preparing KDA state-copy plans."""
+@pytest.mark.parametrize("fa4_enabled, skip_length_sync", [(False, False), (False, True), (True, False), (True, True)])
+def test_initialize_kv_cache_forwards_allocation_context(monkeypatch, fa4_enabled, skip_length_sync):
+    """Forward the allocation context and gate the target's draft metadata filter."""
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "1" if fa4_enabled else "0")
     runner = _make_runner()
     runner.compilation_config = SimpleNamespace(static_forward_context={})
     runner.vllm_config = SimpleNamespace(
@@ -1240,12 +1246,13 @@ def test_initialize_kv_cache_forwards_allocation_context():
     )
     runner.max_num_reqs = runner.vllm_config.scheduler_config.max_num_seqs
     runner.pcp_manager = None
-    runner.model_state = SimpleNamespace(pcp_manager=None, kvpp_runtime=None)
-    runner.speculator = None
+    runner.model_state.draft_attn_layer_names_to_skip = frozenset({"previous_draft"})
+    runner.speculator = SimpleNamespace(draft_attn_layer_names={"draft"})
     runner.model_config = SimpleNamespace(enable_return_routed_experts=False, architecture="OtherModel")
     called = False
     captured_kwargs: dict[str, object] = {}
     allocation_context = object()
+    attention_spec = FullAttentionSpec(block_size=16, num_kv_heads=1, head_size=64, dtype=torch.bfloat16)
     kv_cache_config = KVCacheConfig(
         num_blocks=1,
         kv_cache_tensors=[],
@@ -1257,7 +1264,12 @@ def test_initialize_kv_cache_forwards_allocation_context():
         called = True
         captured_kwargs.update(kwargs)
         self.kv_cache_config = kv_cache_config
-        self.attn_groups = []
+        self.attn_groups = [
+            [
+                AttentionGroup(AscendFA4TargetBackend, ["target"], attention_spec, 0, [Mock(spec=[])]),
+                AttentionGroup(AscendFA4Backend, ["draft"], attention_spec, 0, [Mock(spec=[])]),
+            ]
+        ]
 
     def _prepare_kda(context, maximum):
         """Check cache binding and configuration at the startup boundary."""
@@ -1269,7 +1281,7 @@ def test_initialize_kv_cache_forwards_allocation_context():
     with (
         patch("vllm_ascend.ops.kda_state_copy_plan.initialize_kda_state_copy", side_effect=_prepare_kda) as prepare_kda,
         patch.object(GPUModelRunner, "initialize_kv_cache", _super),
-        patch.object(NPUModelRunner, "_can_skip_spec_cpu_length_sync", return_value=False),
+        patch.object(NPUModelRunner, "_can_skip_spec_cpu_length_sync", return_value=skip_length_sync),
         patch("vllm_ascend.worker.v2.model_runner.ModelAclGraphManager", return_value="acl"),
         patch(
             "vllm_ascend.worker.v2.model_runner.KVPPRuntime.create_from_kv_cache",
@@ -1281,6 +1293,8 @@ def test_initialize_kv_cache_forwards_allocation_context():
     prepare_kda.assert_called_once_with(runner.compilation_config.static_forward_context, 8)
     assert called is True
     assert captured_kwargs["kv_cache_allocation_context"] is allocation_context
+    expected_draft_layers = frozenset({"draft"}) if fa4_enabled and skip_length_sync else frozenset()
+    assert runner.model_state.draft_attn_layer_names_to_skip == expected_draft_layers
 
 
 @pytest.mark.parametrize("moe_type", [MoECommType.MC2, MoECommType.FUSED_MC2])
@@ -1887,6 +1901,49 @@ def test_flashmla_cpu_length_sync_bypass_does_not_copy_or_record_event():
     current_stream.assert_not_called()
     runner.num_computed_tokens_cpu.copy_.assert_not_called()
     runner.num_computed_tokens_event.record.assert_not_called()
+
+
+@pytest.mark.parametrize("blocker", [None, "draft_fia", "causal_draft", "missing_group", "pp", "pcp", "dcp", "av"])
+def test_fa4_cpu_length_sync_bypass_checks_active_draft_paths(blocker):
+    runner = _make_runner()
+    runner._use_fa4_target_attention = True
+    runner.sync_spec_pp_cpu_counts = False
+    runner.adaptive_verification = object() if blocker == "av" else None
+    runner.vllm_config.kv_transfer_config = None
+    runner.vllm_config.parallel_config = SimpleNamespace(
+        pipeline_parallel_size=2 if blocker == "pp" else 1,
+        prefill_context_parallel_size=2 if blocker == "pcp" else 1,
+        decode_context_parallel_size=2 if blocker == "dcp" else 1,
+    )
+    runner.ascend_config.kvpp_config = SimpleNamespace(size=1)
+    runner.speculator = SimpleNamespace(
+        _group_causal={0: False, **({1: blocker == "causal_draft"} if blocker != "missing_group" else {})},
+        attn_groups=[
+            [SimpleNamespace(backend=AscendFA4Backend, kv_cache_group_id=0)],
+            [
+                SimpleNamespace(
+                    backend=AscendAttentionBackend if blocker == "draft_fia" else AscendFIASinkBackend,
+                    kv_cache_group_id=1,
+                )
+            ],
+        ],
+    )
+    assert runner._can_skip_spec_cpu_length_sync() is (blocker is None)
+
+
+@pytest.mark.parametrize("uses_fa4", [False, True])
+def test_full_graph_fa4_has_fixed_request_axis_and_zero_query_padding(uses_fa4):
+    runner, output, batch, desc = _prepare_inputs_runner(full_cg=True)
+    runner._use_fa4_target_attention = uses_fa4
+    desc.num_reqs = 4
+    desc.uniform_token_count = 2
+    combine = Mock(return_value=torch.tensor([0, 1], dtype=torch.int32))
+    _run_prepare_inputs(runner, output, batch, desc, combine_tokens=combine)
+
+    offsets, seq_lens = combine.call_args.args[3:5]
+    assert seq_lens.shape == (4,)
+    expected_offsets = [0, 2, 4, 4, 4] if uses_fa4 else [0, 2, 4, 6, 8]
+    assert offsets.tolist() == expected_offsets
 
 
 def test_flashmla_cpu_lengths_keep_upper_bounds_without_event_wait():

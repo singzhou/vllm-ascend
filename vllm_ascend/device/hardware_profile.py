@@ -84,6 +84,8 @@ class HardwareCapability(Enum):
     DSV41_PACKED_CACHE = auto()
     # Triton RMS/dot/gate/residual fusion for unrotated Engram inputs.
     ENGRAM_UNROTATED_GATE = auto()
+    # The Ascend910 FA4 wheel supports causal paged TND with device lengths.
+    FA4_CAUSAL_DEVICE_LENGTHS = auto()
     # Decode native FP8 codes and E8M0 group scales in Engram table lookups.
     ENGRAM_MXFP8 = auto()
     # Enable dynamic-MX norm fusion and the associated ``wo_a`` weight-layout contract.
@@ -245,6 +247,7 @@ class HardwareProfile:
 
 _STANDARD_CAPABILITIES = frozenset(
     {
+        HardwareCapability.FA4_CAUSAL_DEVICE_LENGTHS,
         HardwareCapability.AUTO_ENABLE_CUSTOM_OPS,
         HardwareCapability.ATB_EXTENSIONS,
         HardwareCapability.ATB_WARMUP,

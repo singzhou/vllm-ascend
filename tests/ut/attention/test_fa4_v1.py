@@ -27,7 +27,12 @@ from vllm_ascend.attention.attention_v1 import (
     AscendAttentionBackendImpl,
     AscendAttentionMetadataBuilder,
 )
-from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4Impl, AscendFA4MetadataBuilder
+from vllm_ascend.attention.fa4_v1 import (
+    AscendFA4Backend,
+    AscendFA4Impl,
+    AscendFA4MetadataBuilder,
+    AscendFA4TargetMetadataBuilder,
+)
 
 
 @pytest.mark.parametrize("head_size", [128, 256])
@@ -145,6 +150,65 @@ def test_builder_requires_parallel_drafting_and_loads_fa4():
         config.speculative_config = SimpleNamespace(parallel_drafting=True)
         AscendFA4MetadataBuilder(None, ["draft"], config, "cpu")
         load.assert_called_once()
+
+
+def test_target_builder_uses_fa4_causal_mask():
+    builder = AscendFA4TargetMetadataBuilder.__new__(AscendFA4TargetMetadataBuilder)
+    builder.pcp_enabled = False
+    builder.kv_cache_spec = None
+    builder.model_config = SimpleNamespace(runner_type="generate")
+    builder.attn_mask_builder = MagicMock()
+    offsets = torch.tensor([0, 2], dtype=torch.int32)
+    common = SimpleNamespace(
+        causal=True,
+        num_reqs=1,
+        num_actual_tokens=2,
+        max_query_len=2,
+        query_start_loc=offsets,
+        query_start_loc_cpu=offsets,
+        seq_lens=torch.tensor([129], dtype=torch.int32),
+        block_table_tensor=torch.tensor([[0, 1]], dtype=torch.int32),
+        slot_mapping=torch.arange(2),
+        attn_state=None,
+    )
+
+    with patch.object(builder, "_split_decodes_and_prefills", return_value=(1, 0, 2, 0)):
+        metadata = builder.build(0, common)
+
+    builder.attn_mask_builder.get_attention_mask.assert_not_called()
+    assert metadata.attn_mask is None
+    assert metadata.seq_lens is common.seq_lens
+
+
+def test_virtual_page_table_is_shared_within_one_forward_only():
+    first_layer = torch.empty(4, 2, 16, 2, 256)
+    second_layer = torch.empty_like(first_layer)
+    different_stride = torch.empty(4, 3, 16, 2, 256)
+    block_table = torch.tensor([[3, 1]], dtype=torch.int32)
+    context = SimpleNamespace()
+
+    first_key, _, first_table = fa4_module._fa4_cache_views(
+        first_layer[:, 0], first_layer[:, 1], block_table, forward_context=context
+    )
+    second_key, _, second_table = fa4_module._fa4_cache_views(
+        second_layer[:, 0], second_layer[:, 1], block_table[:], forward_context=context
+    )
+    _, other_value, other_table = fa4_module._fa4_cache_views(
+        different_stride[:, 0], different_stride[:, 1], block_table, forward_context=context
+    )
+    assert first_key.data_ptr() == first_layer.data_ptr()
+    assert second_key.data_ptr() == second_layer.data_ptr()
+    assert other_value.data_ptr() == different_stride[:, 1].data_ptr()
+    assert first_table is second_table
+    torch.testing.assert_close(first_table, block_table * 2)
+    torch.testing.assert_close(other_table, block_table * 3)
+
+    block_table[0, 0] = 0
+    _, _, next_table = fa4_module._fa4_cache_views(
+        first_layer[:, 0], first_layer[:, 1], block_table, forward_context=SimpleNamespace()
+    )
+    assert next_table is not first_table
+    torch.testing.assert_close(next_table, block_table * 2)
 
 
 @pytest.mark.parametrize(
