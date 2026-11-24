@@ -468,6 +468,28 @@ The following code configures vLLM Ascend to use speculative decoding where prop
       --speculative-config '{"method": "dspark", "model": "deepseek-ai/dspark_qwen3_8b_block7", "num_speculative_tokens": 7, "enforce_eager": true}'
     ```
 
+### W8A8 dynamic INT8 for Qwen3 DSpark drafts
+
+Model Runner V2 can load a standalone Qwen3 DSpark draft exported in the
+ModelSlim AscendV1 format with `W8A8_DYNAMIC` linear weights. Use symmetric
+per-channel INT8 weights and dynamic per-token INT8 activations. Keep the
+embedding, LM head, Markov head, and confidence head in their original dtype.
+For a reduced-vocabulary draft that shares the target LM head, preserve the
+`d2t` tensor so the runner can derive the draft head from the target weights.
+
+Enable Model Runner V2 and set `quantization` inside the speculative
+configuration. The main model's quantization is configured independently.
+
+```shell
+VLLM_USE_V2_MODEL_RUNNER=1 vllm serve /path/to/target \
+  --speculative-config '{
+    "method": "dspark",
+    "model": "/path/to/qwen3-dspark-w8a8",
+    "quantization": "ascend",
+    "num_speculative_tokens": 7
+  }'
+```
+
 ### Adaptive verification
 
 Adaptive verification lets DSpark choose how many draft tokens to verify for
