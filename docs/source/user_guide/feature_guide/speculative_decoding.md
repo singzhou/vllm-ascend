@@ -531,6 +531,28 @@ Adaptive verification takes effect only with model runner V2.
 For more details, see the
 [vLLM community documentation](https://docs.vllm.ai/en/latest/features/speculative_decoding/adaptive_verification/).
 
+### Greedy tree acceptance experiment
+
+Set `--additional-config '{"dspark_tree_acceptance":true}'` on an MRV2 DSpark server
+to measure how much of the target's greedy continuation a draft tree covers.
+Use `VLLM_USE_V2_MODEL_RUNNER=1`, `--no-async-scheduling`, tensor parallelism only,
+and fixed-length DSpark with `"draft_sample_method":"greedy"`,
+`"enable_adaptive_verification":false` and `"num_speculative_tokens":7`.
+Send text requests with `temperature=0`.
+
+The experiment reuses the draft backbone outputs and eagerly expands the Markov
+head for alternative parent tokens. The server runs its regular chain
+verification, and the experiment checks all three proposals against the same
+confirmed target tokens at each measured prefix.
+
+Search for `DSpark tree acceptance` in the worker log. The cumulative summaries
+report the original chain, a tree with the same node budget, and a tree with up to
+15 nodes. Each histogram starts at zero accepted draft tokens. Add one to
+`mean_accepted` to include the target's recovery or bonus token. Check that
+`chain_mismatch` is zero and use `paired` as the denominator. The experiment
+discards incomplete windows near request termination and adds eager draft work
+and synchronization, so use these summaries for acceptance analysis.
+
 ## Draft KV Sliding Window {: #draft-kv-sliding-window }
 
 Draft models are often trained on short contexts (e.g. 4-8k tokens). When the

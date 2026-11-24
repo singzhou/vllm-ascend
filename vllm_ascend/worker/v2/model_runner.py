@@ -1133,12 +1133,22 @@ class NPUModelRunner(GPUModelRunner):
         ``max_num_reqs * decode_query_len``); drift desyncs and hangs."""
         return lmhead_tp_max_num_logits(self.max_num_reqs, self.decode_query_len)
 
+    def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
+        stats = getattr(self.speculator, "tree_acceptance_stats", None)
+        if stats is not None:
+            ids = scheduler_output.finished_req_ids | (scheduler_output.preempted_req_ids or set())
+            if stats.discard(ids):
+                logger.info("DSpark tree acceptance %s", stats.summary())
+        super().finish_requests(scheduler_output)
+
     def sample(self, hidden_states, input_batch, grammar_output):
         """Override GPUModelRunner.sample for lmhead TP: every rank must feed
         compute_logits the same row count — pad up to ``_lmhead_tp_max_num_logits()``
         and trim back; prompt_logprobs stays unsupported (same as V1)."""
         if not lmhead_tp_enable():
-            return super().sample(hidden_states, input_batch, grammar_output)
+            output = super().sample(hidden_states, input_batch, grammar_output)
+            self._observe_dspark_tree(input_batch, output)
+            return output
 
         num_logits = input_batch.logits_indices.shape[0]
         capacity = self._lmhead_tp_max_num_logits()
@@ -1178,7 +1188,23 @@ class NPUModelRunner(GPUModelRunner):
                 self.speculator.draft_logits,
             )
 
-        return sampler_output, sampler_output.num_sampled, sampler_output.num_rejected
+        output = (sampler_output, sampler_output.num_sampled, sampler_output.num_rejected)
+        self._observe_dspark_tree(input_batch, output)
+        return output
+
+    def _observe_dspark_tree(self, input_batch, output) -> None:
+        stats = getattr(self.speculator, "tree_acceptance_stats", None)
+        if stats is None:
+            return
+        if input_batch.has_structured_output_reqs:
+            stats.discard(input_batch.req_ids)
+            return
+        sampler_output, num_sampled, _ = output
+        tokens = sampler_output.sampled_token_ids.tolist()
+        counts = num_sampled.tolist()
+        scheduled = input_batch.num_draft_tokens_per_req
+        for i, req_id in enumerate(input_batch.req_ids):
+            stats.observe(req_id, tokens[i][: counts[i]], int(scheduled[i]) if scheduled is not None else 0)
 
     @contextmanager
     def _cap_parallel_draft_dummy_reqs(self, uniform_decode: bool):

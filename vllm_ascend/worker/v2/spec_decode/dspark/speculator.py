@@ -16,13 +16,14 @@
 # This file is a part of the vllm-ascend project.
 #
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from typing import Any, cast
 
 import numpy as np
 import torch
 from vllm.config import VllmConfig, get_layers_from_vllm_config, set_current_vllm_config
 from vllm.config.compilation import CUDAGraphMode
-from vllm.distributed import get_dcp_group
+from vllm.distributed import get_dcp_group, get_tensor_model_parallel_rank
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backend import AttentionBackend
 from vllm.v1.worker.gpu.cudagraph_utils import BatchExecutionDescriptor
@@ -33,6 +34,7 @@ from vllm.v1.worker.gpu.spec_decode.dspark.speculator import (
 )
 from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import get_eagle3_aux_layers_from_config
 
+from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend, AscendAttentionState
 from vllm_ascend.attention.mla_v1 import AscendMLABackend, all_mla_use_flashmla
 from vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.dspark_context import (
@@ -45,6 +47,7 @@ from vllm_ascend.ops.triton.v2.spec_decode.expand_draft_logits import (
     make_draft_vocab_block_starts,
     make_target_to_draft_map,
 )
+from vllm_ascend.spec_decode.dspark_tree import TREE_NODE_BUDGET, TreeAcceptanceStats, build_draft_trees
 from vllm_ascend.spec_decode.vocab_mapping import settle_reduced_vocab_lm_head
 from vllm_ascend.utils import lmhead_tp_enable, lmhead_tp_max_num_logits
 from vllm_ascend.worker.dcp_utils import DCPManager
@@ -70,6 +73,7 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
     # the group-agreed capacity and trim the logits back (no _sample_sequential
     # override, upstream sampling logic untouched).
     _lmhead_tp_sample_draft_supported = True
+    measure_tree_acceptance = False
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         vllm_config, self.replicated_pcp = prepare_replicated_pcp_config(vllm_config)
@@ -81,6 +85,26 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         self._target_to_draft_map: torch.Tensor | None = None
         self._draft_vocab_block_starts: torch.Tensor | None = None
         self._init_dcp()
+        self.measure_tree_acceptance = get_ascend_config().dspark_tree_acceptance
+        self.tree_acceptance_stats = None
+        if self.measure_tree_acceptance:
+            parallel = vllm_config.parallel_config
+            if (
+                self.enable_adaptive_verification
+                or self.draft_logits is not None
+                or vllm_config.scheduler_config.async_scheduling
+                or parallel.pipeline_parallel_size != 1
+                or parallel.data_parallel_size != 1
+                or parallel.prefill_context_parallel_size != 1
+                or self.use_dcp
+                or self.num_speculative_steps > TREE_NODE_BUDGET
+            ):
+                raise ValueError(
+                    "dspark_tree_acceptance requires fixed-length greedy DSpark with at most "
+                    f"{TREE_NODE_BUDGET} draft steps, synchronous scheduling and TP-only parallelism."
+                )
+            if get_tensor_model_parallel_rank() == 0:
+                self.tree_acceptance_stats = TreeAcceptanceStats(self.num_speculative_steps)
 
     def _init_dcp(self) -> None:
         self.use_dcp = self.attn_vllm_config.parallel_config.decode_context_parallel_size > 1
@@ -195,7 +219,7 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         )
 
         lane_stays_eager = adaptive_verification_enabled(self.vllm_config) and av_graph_mode() == GRAPH_MODE_NONE
-        if self.speculative_config.enforce_eager or lane_stays_eager:
+        if self.speculative_config.enforce_eager or lane_stays_eager or self.measure_tree_acceptance:
             cudagraph_mode = CUDAGraphMode.NONE
         super().init_cudagraph_manager(cudagraph_mode)
         # The Ascend graph manager is patched onto the upstream module and
@@ -465,6 +489,47 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         )
         return hidden_states
 
+    @contextmanager
+    def _measure_tree_proposal(self, input_batch, num_sampled, temperature):
+        # Keep the normal sampler, and copy its LM-head output before the
+        # upstream top-k path rewrites that tensor in place.
+        original = self.model.compute_draft_logits
+        captured = None
+
+        def capture(hidden):
+            nonlocal captured
+            logits = original(hidden)
+            captured = (logits.clone(), hidden)
+            return logits
+
+        self.model.compute_draft_logits = capture
+        try:
+            yield
+        finally:
+            self.model.compute_draft_logits = original
+
+        assert captured is not None
+        width = self.num_speculative_steps
+        active = (num_sampled > 0) & (temperature[input_batch.idx_mapping] == 0)
+        rows = active.nonzero(as_tuple=True)[0]
+        if rows.numel() == 0:
+            return
+        logits, hidden = captured
+        batch = input_batch.num_reqs
+        # Full-vocabulary Markov projection can use TP collectives, so all
+        # ranks compute the same proposals and only rank zero reports them.
+        trees = build_draft_trees(
+            self.model,
+            logits.view(batch, width, -1)[rows],
+            hidden.view(batch, width, -1)[rows],
+            self.input_buffers.input_ids[self._anchor_idx[rows]],
+            self._draft_topk,
+            self.model.model.confidence_head is not None and getattr(self.model, "enable_confidence_head", True),
+        )
+        if self.tree_acceptance_stats is not None:
+            for row, chain, tree in zip(rows.tolist(), self.draft_tokens[rows].tolist(), trees):
+                self.tree_acceptance_stats.propose(input_batch.req_ids[row], chain, tree)
+
     def propose(
         self,
         input_batch: InputBatch,
@@ -509,7 +574,14 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
             seq_lens_cpu, is_prefilling = self._prepare_draft_dcp_metadata_inputs(
                 input_batch.num_reqs, self.max_num_reqs, self.num_query_per_req
             )
+        measure_tree = (
+            self.measure_tree_acceptance
+            and not dummy_run
+            and not is_profile
+            and not input_batch.has_structured_output_reqs
+        )
         with (
+            self._measure_tree_proposal(input_batch, num_sampled, temperature) if measure_tree else nullcontext(),
             build_attn_metadata_wrapper(),
             build_attn_metadata_factory(
                 self.input_buffers.positions,
