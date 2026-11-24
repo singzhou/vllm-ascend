@@ -956,15 +956,26 @@ def _fix_incompatible_config(vllm_config: VllmConfig) -> None:
             vllm_config.scheduler_config.max_num_partial_prefills = 1
 
     # ==================== 6. Speculative Config ====================
-    if vllm_config.speculative_config:
-        # Ascend automatically inherits main model quantization
-        if getattr(vllm_config.speculative_config, "quantization", None) is not None:
+    speculative_config = vllm_config.speculative_config
+    if getattr(speculative_config, "quantization", None) is not None:
+        draft_config = speculative_config.draft_model_config
+        # Standalone Qwen3 DSpark drafts on Model Runner V2 load their own
+        # ModelSlim metadata independently of the target.
+        uses_standalone_dspark_quant = (
+            speculative_config.quantization == ASCEND_QUANTIZATION_METHOD
+            and speculative_config.method == "dspark"
+            and vllm_config.use_v2_model_runner
+            and draft_config is not None
+            and draft_config.hf_config.model_type == "qwen3"
+            and draft_config.model != model_config.model
+        )
+        if not uses_standalone_dspark_quant:
             logger.warning(
                 "Speculative quantization is set but Ascend automatically uses "
                 "the main model's quantization method. "
                 "parameter=quantization, action: resetting to None. "
             )
-            vllm_config.speculative_config.quantization = None
+            speculative_config.quantization = None
 
     # ==================== 7. KV Transfer Config ====================
     if vllm_config.kv_transfer_config:
