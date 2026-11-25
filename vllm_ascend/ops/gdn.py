@@ -29,7 +29,7 @@ from torch import nn
 from vllm.distributed import get_pcp_group
 from vllm.forward_context import get_forward_context
 from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
-from vllm.model_executor.layers.mamba.mamba_utils import MambaStateShapeCalculator
+from vllm.model_executor.layers.mamba.mamba_utils import MambaStateShapeCalculator, is_conv_state_dim_first
 from vllm.model_executor.utils import replace_parameter
 from vllm.third_party.flash_linear_attention.ops.l2norm import l2norm_fwd
 from vllm.triton_utils import triton
@@ -46,6 +46,7 @@ from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import record_attention_compute_start
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNFusedAttentionBackend
 from vllm_ascend.ops.gdn_recurrent import legacy_recurrent_gated_delta_rule, select_gdn_recurrent_backend
+from vllm_ascend.ops.gdn_tree import tree_conv, tree_recurrent
 from vllm_ascend.ops.triton.fla.chunk import chunk_gated_delta_rule
 from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_split_reshape_cat
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
@@ -515,12 +516,25 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
         if self.head_k_dim == self.head_v_dim and self.head_k_dim % 16 == 0:
             conv_head_num = (2 * self.num_k_heads + self.num_v_heads) // self.tp_size
 
+        tree_steps = getattr(attn_metadata, "tree_steps", None)
+
         # 1.1: Process the multi-query part
         if spec_sequence_masks is not None:
             spec_causal_conv1d_meta = attn_metadata.spec_decode_metadata.spec_causal_conv1d
             spec_query_start_loc_device = spec_causal_conv1d_meta.query_start_loc
             output_spec = torch.empty_like(mixed_qkv_spec)
-            if recurrent_backend == "dcut":
+            if tree_steps is not None:
+                output_spec = tree_conv(
+                    mixed_qkv_spec,
+                    conv_weights_T,
+                    self.conv1d.bias,
+                    self_kv_cache[0],
+                    spec_state_indices_tensor,
+                    tree_steps,
+                    self.activation,
+                    dim_first=is_conv_state_dim_first(),
+                )
+            elif recurrent_backend == "dcut":
                 torch.ops._C_ascend.npu_dcut_causal_conv1d(
                     output_spec,
                     mixed_qkv_spec,
@@ -727,7 +741,19 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             key_spec = l2norm_fwd(key_spec)
             # Dynamic verification always uses DCUT. Fixed verification selects
             # FLA (up to 8 tokens) or the restored legacy kernel (up to 16).
-            if recurrent_backend == "dcut":
+            if tree_steps is not None:
+                core_attn_out_spec = tree_recurrent(
+                    query_spec,
+                    key_spec,
+                    value_spec,
+                    g_spec,
+                    beta_spec,
+                    ssm_state,
+                    spec_state_indices_tensor,
+                    tree_steps,
+                    legacy_recurrent_gated_delta_rule,
+                )
+            elif recurrent_backend == "dcut":
                 core_attn_out_spec = torch.ops._C_ascend.npu_dcut_recurrent_gated_delta_rule(
                     query=query_spec.squeeze(0),
                     key=key_spec.squeeze(0),

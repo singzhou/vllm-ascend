@@ -60,9 +60,10 @@ from vllm_ascend.worker.v2.spec_decode.pcp_utils import (
     disable_profiling_chunk_for_draft,
     prepare_replicated_pcp_config,
 )
+from vllm_ascend.worker.v2.spec_decode.tree.draft import TreeDraftMixin, build_dspark_trees
 
 
-class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
+class AscendDSparkSpeculator(TreeDraftMixin, LmheadTPDraftSamplingMixin, DSparkSpeculator):
     _speculator_name = "DSpark"
     # DSpark samples via compute_draft_logits and never calls sample_draft, so
     # the mixin sample_draft alignment is not used; instead load_draft_model
@@ -81,6 +82,25 @@ class AscendDSparkSpeculator(LmheadTPDraftSamplingMixin, DSparkSpeculator):
         self._target_to_draft_map: torch.Tensor | None = None
         self._draft_vocab_block_starts: torch.Tensor | None = None
         self._init_dcp()
+
+    def _sample_sequential(self, num_reqs: int, head_hidden: torch.Tensor) -> None:
+        rows = getattr(self, "_tree_draft_rows", ())
+        if len(rows) != num_reqs or not rows:
+            super()._sample_sequential(num_reqs, head_hidden)
+        if not rows:
+            return
+
+        depth = self.num_speculative_steps
+        indices = self.sample_indices[: num_reqs * depth].view(num_reqs, depth)[list(rows)]
+        hidden = head_hidden[indices]
+        logits = self.model.compute_draft_logits(hidden.flatten(0, 1)).view(len(rows), depth, -1)
+        anchors = self.input_buffers.input_ids[self._anchor_idx[list(rows)]]
+        use_confidence = self.model.model.confidence_head is not None and getattr(
+            self.model, "enable_confidence_head", True
+        )
+        self._draft_trees = build_dspark_trees(
+            self.model, logits, hidden, anchors, self._draft_topk, use_confidence, self.tree_topk
+        )
 
     def _init_dcp(self) -> None:
         self.use_dcp = self.attn_vllm_config.parallel_config.decode_context_parallel_size > 1

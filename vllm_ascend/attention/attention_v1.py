@@ -49,7 +49,7 @@ from vllm_ascend.attention.context_parallel.common_cp import (
     get_pcp_num_replicated_tokens,
     is_pcp_decode_sharding_enabled,
 )
-from vllm_ascend.attention.fia_cache import call_fia_with_virtual_pages
+from vllm_ascend.attention.fia_cache import call_fia_with_virtual_pages, prepare_fia_cache
 from vllm_ascend.attention.utils import (
     AscendCommonAttentionMetadata,
     _select_seq_lens,
@@ -67,6 +67,7 @@ from vllm_ascend.device.device_op import DeviceOperator
 from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_hardware_profile
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.attention_fence import attention_transfer_window
 from vllm_ascend.utils import MINIMAX_M3_FP8_KV_CACHE_BLOCK_SIZE, is_minimax_m3_fp8_kv_cache
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch, gather_cache_rows
 
 # default max value of sliding window size
 SWA_INT_MAX = 2147483647
@@ -233,6 +234,7 @@ class AscendMetadata:
     # the metadata op executes inside the captured region.
     qfa_metadata_cache: dict = field(default_factory=dict)
     pcp_local_num_input_tokens: int | None = None
+    tree_batch: TreeBatch | None = None
 
 
 class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
@@ -460,6 +462,7 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             num_decodes=num_decodes,
             causal=common_attn_metadata.causal,
             model_runner_type=self.model_config.runner_type,
+            tree_batch=common_attn_metadata.tree_batch,
             **backend_metadata,
         )
         if self.pcp_enabled:
@@ -1282,6 +1285,43 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
         return query, cache_key, cache_value, output
 
+    def _forward_tree_rows(self, query, key, value, metadata, output, kv_cache):
+        key, value, block_size, block_table, seq_lens = self._get_fia_params(key, value, metadata, kv_cache)
+        tree = metadata.tree_batch
+        for row in tree.tree_rows:
+            seq_len = seq_lens[row.row]
+            if seq_len != row.prefix + row.width:
+                raise RuntimeError("Tree attention sequence length does not match the allocated query slots")
+            pages = (seq_len + block_size - 1) // block_size
+            table = block_table[row.row : row.row + 1, :pages]
+            key_pages, value_pages, table = prepare_fia_cache(key, value, table)
+            if not key_pages.is_contiguous() or not value_pages.is_contiguous():
+                # Hybrid layouts may have padded page strides. Materialize
+                # only the cache pages this request can read.
+                indices = table.reshape(-1, 1)
+                key_pages = gather_cache_rows(key, indices)
+                value_pages = gather_cache_rows(value, indices)
+                table = torch.arange(pages, device=table.device, dtype=table.dtype).view(1, -1)
+
+            query_slice = slice(row.start, row.start + row.width)
+            result, _ = torch_npu.npu_fused_infer_attention_score(
+                query=query[query_slice].unsqueeze(0),
+                key=key_pages,
+                value=value_pages,
+                atten_mask=tree.attention_mask(row, pages * block_size),
+                block_table=table,
+                input_layout="BSND",
+                block_size=block_size,
+                actual_seq_lengths=[row.width],
+                actual_seq_lengths_kv=[seq_len],
+                num_key_value_heads=self.num_kv_heads,
+                num_heads=self.num_heads,
+                scale=self.scale,
+                sparse_mode=0,
+            )
+            output[query_slice] = result.squeeze(0)
+        return output
+
     def forward_impl(
         self,
         query: torch.Tensor,
@@ -1293,6 +1333,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
     ):
         with attention_transfer_window():
             num_tokens = query.shape[0]
+
+            tree = attn_metadata.tree_batch
+            if tree is not None and tree.tree_rows:
+                if sum(row.width for row in tree.tree_rows) < attn_metadata.num_actual_tokens:
+                    # Ordinary rows retain the original mixed-batch FIA path.
+                    self.forward_fused_infer_attention(query, key, value, attn_metadata, output, kv_cache)
+                return self._forward_tree_rows(query, key, value, attn_metadata, output, kv_cache)
 
             if (
                 attn_metadata.attn_state == AscendAttentionState.DecodeOnly

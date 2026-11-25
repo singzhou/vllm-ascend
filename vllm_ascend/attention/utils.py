@@ -36,6 +36,7 @@ from vllm_ascend.utils import (
     get_ascend_config,
     is_pd_decode_recompute_scheduler_enabled,
 )
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch
 
 # Native npu_attention_update accepts at most 16 output/LSE pairs.
 ATTENTION_UPDATE_MAX_INPUTS = 16
@@ -403,6 +404,8 @@ class AscendCommonAttentionMetadata(CommonAttentionMetadata):
     _num_computed_tokens_cpu: torch.Tensor | None = None
     dcp_local_seq_lens_cpu: torch.Tensor | None = None
 
+    tree_batch: TreeBatch | None = None
+
     # TODO: Remove it when vLLM no longer uses this function.
     def unpadded(self, num_actual_tokens: int, num_actual_reqs: int) -> "AscendCommonAttentionMetadata":
         # This only use to eagle now. It will be use to enforce_eager in future.
@@ -430,6 +433,7 @@ class AscendCommonAttentionMetadata(CommonAttentionMetadata):
             positions=self.positions,
             positions_cpu=self.positions_cpu,
             attn_state=self.attn_state,
+            tree_batch=self.tree_batch,
             graph_pad_size=-1,  # It should be -1 when not run in fullgraph mode.
             num_input_tokens=self.num_input_tokens,
             context_parallel_metadata=self.context_parallel_metadata,

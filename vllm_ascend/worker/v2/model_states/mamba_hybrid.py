@@ -30,15 +30,19 @@ from vllm.v1.worker.gpu.model_states.mamba_hybrid import (
     MambaHybridAttnMetadata,
     MambaHybridModelState,
 )
+from vllm.v1.worker.gpu.spec_decode.rejection_sampler import RejectionSampler
 from vllm.v1.worker.mamba_utils import (
     MambaSpecDecodeGPUContext,
     preprocess_mamba_align_fused_kernel,
 )
 from vllm.v1.worker.utils import AttentionGroup
 
+from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.worker.v2.attn_utils import build_attn_metadata
 from vllm_ascend.worker.v2.input_batch import AscendInputBatch
 from vllm_ascend.worker.v2.model_states.default import AscendModelState
+from vllm_ascend.worker.v2.spec_decode.tree.commit import tree_argmax
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch
 
 # Copy block size used by the upstream fused mamba kernels.
 _COPY_BLOCK_SIZE = 1024
@@ -62,6 +66,25 @@ class _LayerwiseMambaCopyState:
     pending_layers: set[str]
 
 
+class TreeRejectionSampler(RejectionSampler):
+    def __call__(self, logits, input_batch, draft_logits=None):
+        batch = getattr(input_batch, "tree_batch", None)
+        if batch is not None:
+            batch.verified = tree_argmax(logits, input_batch)
+        return super().__call__(logits, input_batch, draft_logits)
+
+
+@dataclass
+class TreeMambaAttnMetadata(MambaHybridAttnMetadata):
+    tree_batch: TreeBatch | None = None
+
+    def get_extra_common_attn_kwargs(self, kv_cache_group_id, num_reqs):
+        extra = super().get_extra_common_attn_kwargs(kv_cache_group_id, num_reqs)
+        if self.tree_batch is not None:
+            extra["tree_batch"] = self.tree_batch
+        return extra
+
+
 class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
     """Mamba state with Ascend-specific attention metadata construction.
 
@@ -78,6 +101,7 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self._tree_verification = get_ascend_config().tree_spec_config.enabled
         self._layerwise_mamba_copy: _LayerwiseMambaCopyState | None = None
         self._layer_state_ranges: dict[str, tuple[int, int]] | None = None
         self._pending_bulk_copy: tuple[MambaSpecDecodeGPUContext, int, torch.Tensor] | None = None
@@ -277,6 +301,24 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
             self._pending_bulk_copy = None
         super().finish_execution(failed=failed)
 
+    def custom_sampler(self, sampler):
+        if self._tree_verification:
+            return sampler, TreeRejectionSampler(sampler, self.vllm_config.speculative_config, self.device)
+        return super().custom_sampler(sampler)
+
+    def prepare_inputs(self, input_batch, req_states):
+        inputs = super().prepare_inputs(input_batch, req_states)
+        tree = getattr(input_batch, "tree_batch", None)
+        if tree is not None and tree.tree_rows and "positions" in inputs:
+            # The upstream MRoPE state adds its per-axis prompt offset to the
+            # linear positions. Preserve those offsets when applying depths.
+            inputs["positions"] = inputs["positions"] + (input_batch.positions - tree.slot_positions)
+        return inputs
+
+    def postprocess_state(self, idx_mapping, num_sampled, num_computed_tokens=None):
+        # The verifier has already copied each winning state to slot zero.
+        super().postprocess_state(idx_mapping, 1 if self._tree_verification else num_sampled, num_computed_tokens)
+
     def prepare_attn(
         self,
         input_batch: AscendInputBatch,
@@ -333,10 +375,11 @@ class AscendMambaHybridModelState(MambaHybridModelState, AscendModelState):
                         num_decode_draft_tokens_np[input_batch.num_reqs :] = padded_query_lens - 1
             num_decode_draft_tokens_cpu = torch.from_numpy(num_decode_draft_tokens_np)
 
-        model_specific_metadata = MambaHybridAttnMetadata(
+        model_specific_metadata = TreeMambaAttnMetadata(
             is_prefilling=is_prefilling,
             num_accepted_tokens=num_accepted_tokens,
             num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,
+            tree_batch=getattr(input_batch, "tree_batch", None),
         )
         max_query_len = input_batch.max_query_len
         if max_query_len is None:

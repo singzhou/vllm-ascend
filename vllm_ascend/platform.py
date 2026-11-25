@@ -597,7 +597,19 @@ class NPUPlatform(Platform):
             enable_shared_expert_dp=ascend_config.enable_shared_expert_dp,
             enable_dsa_cp=ascend_config.enable_dsa_cp,
         )
-        _configure_fa4_target_attention(vllm_config, ascend_config)
+        ascend_config.tree_spec_config.validate_backend(vllm_config)
+        if ascend_config.tree_spec_config.enabled:
+            if ascend_config.dynamic_spec_config.method is not None:
+                raise ValueError("tree_spec_config requires fixed-length verification")
+            if (
+                envs_vllm.VLLM_KV_CACHE_LAYOUT in ("LBHNC", "HND")
+                or ascend_config.enable_kv_nz
+                or ascend_config.sparse_kv_offload_config.enabled
+                or ascend_config.kvpp_config.size != 1
+            ):
+                raise ValueError("tree_spec_config requires standard local FIA KV layout")
+        else:
+            _configure_fa4_target_attention(vllm_config, ascend_config)
 
         # 8.Setup worker class, custom ops and scheduler (ascend_config -> vllm_config).
         _setup_worker_and_scheduler(vllm_config, ascend_config)

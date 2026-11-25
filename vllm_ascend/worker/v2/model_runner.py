@@ -33,7 +33,7 @@ from vllm.logger import logger
 from vllm.sequence import IntermediateTensors
 from vllm.utils.torch_utils import async_tensor_h2d as async_copy_to_gpu
 from vllm.v1.core.sched.output import SchedulerOutput
-from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
+from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec, MambaSpec
 from vllm.v1.worker.dp_utils import skip_dp_coordination
 from vllm.v1.worker.gpu import model_runner as vllm_model_runner
 from vllm.v1.worker.gpu.cudagraph_utils import BatchExecutionDescriptor
@@ -122,6 +122,7 @@ from vllm_ascend.worker.v2.eplb import AscendEPLBController
 from vllm_ascend.worker.v2.input_batch import AscendInputBatch, AscendInputBuffers
 from vllm_ascend.worker.v2.kv_connector import MambaCopyKVConnector
 from vllm_ascend.worker.v2.kvpp import KVPPRuntime
+from vllm_ascend.worker.v2.model_states.mamba_hybrid import AscendMambaHybridModelState
 from vllm_ascend.worker.v2.pcp_manager import AscendPCPManager
 from vllm_ascend.worker.v2.pp_transport import (
     bypass_upstream_spec_pp_guard,
@@ -131,6 +132,9 @@ from vllm_ascend.worker.v2.pp_transport import (
 )
 from vllm_ascend.worker.v2.spec_decode import init_speculator
 from vllm_ascend.worker.v2.spec_decode.eagle.speculator import AscendEagleSpeculator
+from vllm_ascend.worker.v2.spec_decode.tree.commit import CacheGroup, commit_tree_batch
+from vllm_ascend.worker.v2.spec_decode.tree.draft import supports_tree_sampling
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch
 from vllm_ascend.worker.v2.states import AscendRequestState
 from vllm_ascend.worker.v2.utils import (
     AscendV2KVBlockZeroer,
@@ -244,6 +248,12 @@ class NPUModelRunner(GPUModelRunner):
             # Shared update_stream: main model (ModelAclGraphManager) and draft
             # (Eagle/DFlash/DSpark AclGraphManager) all use this same stream.
             self.speculator.update_stream = self.update_stream
+
+        tree_config = self.ascend_config.tree_spec_config
+        self._tree_requests: set[str] | None = set() if tree_config.enabled else None
+        self._tree_caches = ()
+        if tree_config.enabled:
+            self.speculator.init_tree_drafting(tree_config.topk)
 
         # AscendRequestState has extra `num_computed_tokens_cpu` attribute.
         # so reinitialize req_states here.
@@ -387,6 +397,10 @@ class NPUModelRunner(GPUModelRunner):
         if pcp_manager is not None and isinstance(pcp_manager, AscendPCPManager):
             pcp_manager._sampling_hidden_restored = False
         self._restore_replicated_draft_target_states()
+        state = self.execute_model_state
+        tree = getattr(state.input_batch, "tree_batch", None) if state is not None else None
+        if tree is not None:
+            tree.aux_hidden_states = state.aux_hidden_states
         output = super().sample_tokens(grammar_output)
         if self.use_spec_pp and self.is_last_pp_rank:
             assert self.pp_handler is not None
@@ -585,6 +599,35 @@ class NPUModelRunner(GPUModelRunner):
         logger.info("Speculative CPU length synchronization bypass enabled: %s", self._skip_spec_cpu_length_sync)
 
         self._fill_c8_mxfp_v_scale_caches()
+        if self.ascend_config.tree_spec_config.enabled:
+            if not isinstance(self.model_state, AscendMambaHybridModelState):
+                raise RuntimeError("Tree verification requires the Qwen GDN model state")
+            self._tree_caches = self._bind_tree_target_caches()
+            logger.info("Qwen tree verification enabled with %d draft nodes", self.num_speculative_steps)
+
+    def _bind_tree_target_caches(self):
+        groups = []
+        layers = self.compilation_config.static_forward_context
+        draft_layers = self.speculator.draft_attn_layer_names
+        for group_id, group in enumerate(self.kv_cache_config.kv_cache_groups):
+            recurrent = isinstance(group.kv_cache_spec, MambaSpec)
+            allowed = (
+                (AscendGDNAttentionBackend, AscendGDNFusedAttentionBackend, AscendGDNHostMetadataBackend)
+                if recurrent
+                else (AscendAttentionBackend,)
+            )
+            caches = {}
+            for name in group.layer_names:
+                if name in draft_layers or name not in layers:
+                    continue
+                layer = layers[name]
+                if layer.get_attn_backend() not in allowed or len(layer.kv_cache) != 2:
+                    raise RuntimeError(f"Unsupported target attention or cache layout for tree verification in {name}")
+                for cache in layer.kv_cache:
+                    caches[cache.data_ptr(), tuple(cache.shape), cache.stride()] = cache
+            if caches:
+                groups.append(CacheGroup(group_id, recurrent, tuple(caches.values())))
+        return groups
 
     def _fill_c8_mxfp_v_scale_caches(self) -> None:
         """Initialize C8 V scales and retain views for page reassignment."""
@@ -843,6 +886,19 @@ class NPUModelRunner(GPUModelRunner):
                 "batch, a request-arrival step misclassified as prefill, or a full prefill "
                 "scheduled locally — a request sent directly to the decode node)."
             )
+
+    def _remove_request(self, req_id):
+        if getattr(self, "_tree_requests", None) is not None:
+            self._tree_requests.discard(req_id)
+            self.speculator.tree_proposals.pop(req_id, None)
+        return super()._remove_request(req_id)
+
+    def add_requests(self, scheduler_output):
+        super().add_requests(scheduler_output)
+        if getattr(self, "_tree_requests", None) is not None:
+            for request in scheduler_output.scheduled_new_reqs:
+                if supports_tree_sampling(request.sampling_params):
+                    self._tree_requests.add(request.req_id)
 
     def prepare_inputs(  # type: ignore[misc]
         self,
@@ -1106,10 +1162,35 @@ class NPUModelRunner(GPUModelRunner):
             batch_desc=batch_desc,
         )
 
+        if getattr(self, "_tree_requests", None) is not None:
+            input_batch.tree_draft_rows = tuple(
+                row
+                for row, req_id in enumerate(req_ids)
+                if req_id in self._tree_requests
+                and self.input_buffers.seq_lens_np[row] >= input_batch.prefill_len_np[row]
+            )
+            tree = TreeBatch.from_schedule(
+                input_batch,
+                self.speculator.tree_proposals,
+                scheduler_output.scheduled_spec_decode_tokens,
+            )
+            input_batch.tree_batch = tree
+            if tree is not None and tree.tree_rows:
+                input_batch.positions = tree.rope_positions()
+
         # For mla/sfa, update cos/sin. Here is for execute_model.
         update_cos_sin(input_batch.positions)
 
         return input_batch
+
+    def prepare_attn(self, input_batch):
+        tree = getattr(input_batch, "tree_batch", None)
+        if tree is None:
+            return super().prepare_attn(input_batch)
+        block_tables, slot_mappings = super().prepare_attn(replace(input_batch, positions=tree.slot_positions))
+        tree.block_tables = block_tables
+        tree.slot_mappings = slot_mappings
+        return block_tables, slot_mappings
 
     def prepare_dummy_attn(
         self, input_batch: AscendInputBatch, valid_state_slots: bool = False
@@ -1134,6 +1215,26 @@ class NPUModelRunner(GPUModelRunner):
         return lmhead_tp_max_num_logits(self.max_num_reqs, self.decode_query_len)
 
     def sample(self, hidden_states, input_batch, grammar_output):
+        result = self._sample_target(hidden_states, input_batch, grammar_output)
+        tree = getattr(input_batch, "tree_batch", None)
+        if tree is not None:
+            sampler_output, _, _ = result
+            commit_tree_batch(
+                input_batch,
+                sampler_output,
+                tree.verified,
+                self._tree_caches,
+                hidden_states,
+                tree.aux_hidden_states,
+            )
+            if any(path != list(range(1, len(path) + 1)) for _, path in tree.verified.values()):
+                logger.info_once("Qwen tree verification accepted a non-linear draft path.")
+            # The next draft sees the winning path left-aligned at linear
+            # positions. Target attention has already consumed depth positions.
+            input_batch.positions = tree.slot_positions
+        return result
+
+    def _sample_target(self, hidden_states, input_batch, grammar_output):
         """Override GPUModelRunner.sample for lmhead TP: every rank must feed
         compute_logits the same row count — pad up to ``_lmhead_tp_max_num_logits()``
         and trim back; prompt_logprobs stays unsupported (same as V1)."""

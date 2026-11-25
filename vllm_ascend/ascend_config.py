@@ -23,6 +23,7 @@ import os
 from statistics import NormalDist
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+import torch
 from pydantic import ConfigDict, TypeAdapter, field_validator, model_validator
 from pydantic_core import ArgsKwargs
 from vllm.logger import logger
@@ -529,6 +530,7 @@ class AscendConfig:
                     "dynamic_max_step": 256
                 }
             },
+            "tree_spec_config": {"enabled": false, "topk": 3, "budget": null},
             "dynamic_spec_config": {
                 "method": null,
                 "method_params": {}
@@ -568,8 +570,9 @@ class AscendConfig:
     # FULL graphs wait on descriptor-specific external events at consumers.
     # Default to overlap on A5 only; explicit settings override this policy.
     multistream_engram_overlap: bool = dataclasses.field(
-        default_factory=lambda: get_current_hardware_profile().device_adaptor_family
-        == DeviceAdaptorFamily.FP8_OPTIMIZED
+        default_factory=lambda: (
+            get_current_hardware_profile().device_adaptor_family == DeviceAdaptorFamily.FP8_OPTIMIZED
+        )
     )
     enable_prefill_mc2: bool = False
     multistream_overlap_shared_expert: bool = False
@@ -628,6 +631,7 @@ class AscendConfig:
     finegrained_tp_config: FinegrainedTPConfig = dataclasses.field(default_factory=lambda: FinegrainedTPConfig())
     scheduler_config: SchedulerConfig = dataclasses.field(default_factory=lambda: SchedulerConfig())
     dynamic_spec_config: DynamicSpecConfig = dataclasses.field(default_factory=lambda: DynamicSpecConfig())
+    tree_spec_config: TreeSpecConfig = dataclasses.field(default_factory=lambda: TreeSpecConfig())
     # Still factory-injected: construction depends on vllm_config.
     sparse_kv_offload_config: Any = dataclasses.field(kw_only=True)
     kvpp_config: KVPPConfig = dataclasses.field(default_factory=KVPPConfig, kw_only=True)
@@ -1288,6 +1292,61 @@ class AscendConfig:
         ):
             return "fullmesh_v1"
         return self.mc2_comm_alg
+
+
+@config
+class TreeSpecConfig:
+    enabled: bool = False
+    topk: int = 3
+    budget: int | None = None
+
+    def validate_backend(self, vllm_config: VllmConfig) -> None:
+        if not self.enabled:
+            return
+
+        spec = vllm_config.speculative_config
+        model = vllm_config.model_config
+        cache = vllm_config.cache_config
+        parallel = vllm_config.parallel_config
+        scheduler = vllm_config.scheduler_config
+        if not vllm_config.use_v2_model_runner or not model.enforce_eager or scheduler.async_scheduling:
+            raise ValueError("tree_spec_config requires MRV2, --enforce-eager and --no-async-scheduling")
+        if spec is None or spec.draft_model_config is None:
+            raise ValueError("tree_spec_config requires a Qwen3 DSpark or DFlash2 draft")
+        draft_arches = spec.draft_model_config.architectures or ()
+        if not (
+            (spec.use_dspark() and "Qwen3DSparkModel" in draft_arches)
+            or (spec.use_dflash() and "DFlash2DraftModel" in draft_arches)
+        ):
+            raise ValueError("tree_spec_config requires a Qwen3 DSpark or DFlash2 draft")
+        if spec.use_dflash() and not spec.enforce_eager:
+            raise ValueError("DFlash2 tree verification requires enforce_eager in speculative_config")
+        if model.architecture not in ("Qwen3_5ForCausalLM", "Qwen3_5ForConditionalGeneration"):
+            raise ValueError("tree_spec_config requires a dense Qwen GDN target")
+        if (
+            spec.draft_sample_method != "greedy"
+            or spec.rejection_sample_method != "standard"
+            or spec.enable_adaptive_verification
+            or spec.num_speculative_tokens_per_batch_size
+        ):
+            raise ValueError("tree_spec_config requires fixed-length greedy drafting and standard rejection")
+        if self.topk < 1 or (self.budget is not None and self.budget != spec.num_speculative_tokens):
+            raise ValueError("tree_spec_config requires topk >= 1 and budget equal to num_speculative_tokens")
+        if cache.enable_prefix_caching or cache.mamba_cache_mode != "none" or cache.use_kda_recoverssm:
+            raise ValueError("tree_spec_config requires --no-enable-prefix-caching and --mamba-cache-mode none")
+        if (
+            parallel.pipeline_parallel_size != 1
+            or parallel.data_parallel_size != 1
+            or parallel.prefill_context_parallel_size != 1
+            or parallel.decode_context_parallel_size != 1
+            or parallel.enable_batch_sharded_sampling
+            or vllm_config.kv_transfer_config is not None
+            or vllm_config.watermark_config is not None
+            or model.logits_processors
+        ):
+            raise ValueError("tree_spec_config requires TP-only serving with the default sampler and local KV")
+        if model.dtype != torch.bfloat16 or cache.cache_dtype not in ("auto", "bfloat16"):
+            raise ValueError("tree_spec_config requires a BF16 target with an unquantized KV cache")
 
 
 @config

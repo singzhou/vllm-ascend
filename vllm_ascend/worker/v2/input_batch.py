@@ -24,6 +24,7 @@ from vllm.v1.worker.gpu.input_batch import InputBatch, InputBuffers
 
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.ops.rotary_embedding import update_cos_sin
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch
 
 
 class AscendInputBuffers(InputBuffers):
@@ -96,6 +97,8 @@ class AscendInputBatch(InputBatch):
     attn_state: AscendAttentionState | None = None
     is_dummy: bool = False
     is_cpp_profile: bool = False
+    tree_batch: TreeBatch | None = None
+    tree_draft_rows: tuple[int, ...] = ()
 
     @staticmethod
     def _prepare_cpp_profile_dummy(

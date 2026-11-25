@@ -15,6 +15,7 @@
 # This file is a part of the vllm-ascend project.
 #
 
+import torch
 from vllm.config.compilation import CUDAGraphMode
 from vllm.triton_utils import tl, triton
 from vllm.v1.worker.gpu.sample.gumbel import tl_rand32
@@ -23,6 +24,7 @@ from vllm.v1.worker.gpu.spec_decode.dflash2.speculator import DFlash2Speculator
 from vllm_ascend.worker.v2.spec_decode.dflash.speculator import (
     AscendDFlashSpeculator,
 )
+from vllm_ascend.worker.v2.spec_decode.tree.draft import TreeDraftMixin, build_dflash2_trees
 
 
 @triton.jit
@@ -104,7 +106,7 @@ def _selector_walk_kernel_ascend(
         previous = index
 
 
-class AscendDFlash2Speculator(DFlash2Speculator, AscendDFlashSpeculator):
+class AscendDFlash2Speculator(TreeDraftMixin, DFlash2Speculator, AscendDFlashSpeculator):
     """DFlash2 speculative drafter on Ascend NPUs.
 
     Every Ascend-specific behavior is inherited from AscendDFlashSpeculator:
@@ -121,6 +123,12 @@ class AscendDFlash2Speculator(DFlash2Speculator, AscendDFlashSpeculator):
     # _generate_draft -> get_top_k_tokens samples on the vocab-sharded head
     # outside sample_draft; reject lmhead TP at construction (as DSpark).
     _lmhead_tp_sample_draft_supported = False
+
+    def _sample_path(self, candidate_ids: torch.Tensor, scores: torch.Tensor, num_reqs: int) -> None:
+        super()._sample_path(candidate_ids, scores, num_reqs)
+        rows = getattr(self, "_tree_draft_rows", ())
+        if rows:
+            self._draft_trees = build_dflash2_trees(candidate_ids[list(rows)], scores[list(rows)], self.tree_topk)
 
     def init_cudagraph_manager(self, cudagraph_mode: CUDAGraphMode) -> None:
         # V2 passes the runner's cudagraph mode to the draft speculator

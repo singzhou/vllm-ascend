@@ -1460,6 +1460,13 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
             non_spec_token_indx=non_spec_token_indx,
             num_accepted_tokens=num_accepted_tokens,
         )
+        tree_batch = getattr(m, "tree_batch", None)
+        if tree_batch is not None:
+            if num_spec_decodes != len(tree_batch.rows) or num_spec_decode_tokens != sum(
+                row.width for row in tree_batch.rows
+            ):
+                raise RuntimeError("GDN speculative metadata does not match the tree query layout")
+            attn_metadata.tree_steps = tree_batch.gdn_steps()
         if pad_spec_decode:
             self._pad_spec_decode_metadata(
                 attn_metadata,
