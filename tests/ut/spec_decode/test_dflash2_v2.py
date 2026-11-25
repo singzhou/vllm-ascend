@@ -19,13 +19,14 @@
 
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
 from vllm.config.compilation import CUDAGraphMode
 from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 
+from vllm_ascend.worker.v2.aclgraph_utils import model_capture_wrapper
 from vllm_ascend.worker.v2.spec_decode import init_speculator
 from vllm_ascend.worker.v2.spec_decode.dflash.speculator import AscendDFlashSpeculator
 from vllm_ascend.worker.v2.spec_decode.dflash2.speculator import (
@@ -130,6 +131,41 @@ def test_graph_replay_pads_fia_lengths_and_keeps_fa4_device_lengths():
     assert fia.seq_lens_list == [321, 46, 8, 8]
     assert fa4.seq_lens_list is None
     assert fa4.seq_lens.tolist() == [321, 46, 0, 0]
+
+
+def test_dflash2_capture_runs_candidate_selection_through_model_wrapper():
+    speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.num_query_per_req = 3
+    speculator.num_speculative_steps = 2
+    speculator.selector_top_k = 2
+    speculator.enable_adaptive_verification = False
+    speculator.sample_indices = torch.tensor([1, 2])
+    speculator._anchor_indices = torch.tensor([0])
+    speculator.input_buffers = SimpleNamespace(input_ids=torch.tensor([42, 0, 0]))
+    speculator.draft_logits = torch.empty(1, 2, 8)
+    speculator._run_model = Mock(return_value=torch.zeros(3, 4))
+    speculator._sample_path = Mock()
+    speculator._cache_draft_logits = Mock()
+
+    model = torch.nn.Module()
+    model.model = torch.nn.Module()
+    candidates = torch.tensor([[1, 2], [3, 4]])
+    model.compute_candidates = Mock(return_value=(candidates, torch.zeros(2, 2)))
+    scores = torch.ones(1, 2, 2, 2)
+    model.model.candidate_selector = Mock(return_value=scores)
+    speculator.model = model
+
+    with model_capture_wrapper(speculator, is_draft_model_prefill=False):
+        speculator._generate_draft(1, 3, None, None, None)
+
+    assert speculator.model is model
+    model.compute_candidates.assert_called_once()
+    model.model.candidate_selector.assert_called_once()
+    selector_candidates, _, _, anchor = model.model.candidate_selector.call_args.args
+    torch.testing.assert_close(selector_candidates, candidates.unsqueeze(0))
+    torch.testing.assert_close(anchor, torch.tensor([42]))
+    assert speculator._sample_path.call_args.args[1] is scores
+    speculator._cache_draft_logits.assert_called_once()
 
 
 def test_greedy_walk_contract_reference():
