@@ -151,13 +151,13 @@ env_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ASCEND_DSPARK_EAGER_AV_LOG_INTERVAL": lambda: int(
         os.getenv("VLLM_ASCEND_DSPARK_EAGER_AV_LOG_INTERVAL", "50")
     ),
-    # Non-causal parallel-drafting (DSpark / DFlash) attention backend:
+    # Parallel-drafting (DSpark / DFlash) attention backend:
     # 0 = ordinary attention (default), 1 = omni FIA sink (omni_custom_ops),
-    # 2 = FA4 (flash_attn_npu_4, including head_dim=256 on Ascend910).
+    # 2 = FA4 (flash_attn_npu_4, including DFlash2 native sliding window on MRV2).
     # Both custom backends keep seq_lens on device and tile on AICPU.
     # Valid values: 0/1/2. Not sensitive.
     "VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK": lambda: int(os.getenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0")),
-    # Use causal FA4 for Qwen3.6/DSpark target attention on MRV2 (Ascend910).
+    # Use causal FA4 for Qwen GDN target attention with DSpark or DFlash2 on MRV2 (Ascend910).
     # Enables device-only KV lengths when all active attention paths support
     # them. The default draft backend in this mode is FA4; an explicit FIA
     # sink selection is still honored. Valid values: 0 (default), 1. Not sensitive.

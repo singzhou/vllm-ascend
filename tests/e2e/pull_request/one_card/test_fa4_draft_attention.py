@@ -25,54 +25,86 @@ import torch
 import torch.nn.functional as F
 import torch_npu  # noqa: F401
 
-from vllm_ascend.attention.fa4_v1 import AscendFA4Impl, AscendFA4TargetImpl
+from vllm_ascend.attention.fa4_v1 import AscendFA4Impl, AscendFA4TargetImpl, AscendFA4WindowImpl
 
 
 @pytest.mark.parametrize("head_size", [128, 256])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "causal,window", [(False, None), (False, 64), (True, 64)], ids=["full", "noncausal-swa", "causal-swa"]
+)
 @torch.inference_mode()
-def test_fa4_draft_eager_and_graph_replay(head_size, dtype):
+def test_fa4_draft_eager_and_graph_replay(head_size, dtype, causal, window):
     if "Ascend910" not in torch.npu.get_device_name():
         pytest.skip("FA4 AICPU metadata requires Ascend910")
     batch, q_len, heads, kv_heads, page_size, pages_per_req = 4, 4, 8, 2, 128, 16
     torch.manual_seed(0)
     query = torch.randn(batch * q_len, heads, head_size, device="npu", dtype=dtype)
-    key = torch.randn(batch * pages_per_req, page_size, kv_heads, head_size, device="npu", dtype=dtype)
+    key = torch.randn(1 + batch * pages_per_req, page_size, kv_heads, head_size, device="npu", dtype=dtype)
     value = torch.randn_like(key)
-    table = torch.arange(batch * pages_per_req, device="npu", dtype=torch.int32).view(batch, pages_per_req)
+    table = torch.empty(batch, pages_per_req, device="npu", dtype=torch.int32)
+    full_page_ids = torch.arange(1, 1 + batch * pages_per_req, dtype=torch.int32).view(batch, pages_per_req)
     seq_lens = torch.empty(batch, device="npu", dtype=torch.int32)
-    metadata = SimpleNamespace(causal=False, num_actual_tokens=batch * q_len, seq_lens=seq_lens, block_tables=table)
-    impl = AscendFA4Impl.__new__(AscendFA4Impl)
+    metadata = SimpleNamespace(
+        causal=causal,
+        num_actual_tokens=batch * q_len,
+        max_query_len=q_len,
+        query_start_loc=torch.arange(batch + 1, device="npu", dtype=torch.int32) * q_len,
+        seq_lens=seq_lens,
+        block_tables=table,
+    )
+    impl_class = AscendFA4Impl if window is None else AscendFA4WindowImpl
+    impl = impl_class.__new__(impl_class)
     impl.key_cache, impl.value_cache = key, value
     impl.num_heads, impl.num_kv_heads, impl.head_size = heads, kv_heads, head_size
     impl.scale = head_size**-0.5
     impl.use_bnsd_kv_cache = False
+    impl.sliding_window = window
 
     def run():
         output = torch.empty_like(query)
         # One fresh context per forward, as in the model runner. Metadata must
         # be captured INSIDE the graph and re-executed after seq_lens changes.
-        with patch("vllm_ascend.attention.fa4_v1.get_forward_context", return_value=SimpleNamespace()):
+        with (
+            patch("vllm_ascend.attention.fa4_v1.get_forward_context", return_value=SimpleNamespace()),
+            patch("vllm_ascend.attention.fa4_v1._EXTRA_CTX", SimpleNamespace(capturing=False)),
+        ):
             return impl.forward_fused_infer_attention(query, None, None, metadata, output)
 
     q_cpu, k_cpu, v_cpu = query.cpu().float(), key.cpu().float(), value.cpu().float()
-    length_sets = ([900, 512, 700, 0], [2048, 1500, 64, 777])
+    length_sets = ([900, 512, 700, 4 if causal else 0], [2048, 1500, 64, 777])
+
+    def update_cache_metadata(lengths):
+        page_ids = full_page_ids.clone()
+        if window is not None:
+            for row, length in enumerate(lengths):
+                evicted_pages = max(0, length - q_len - window + 1) // page_size
+                page_ids[row, :evicted_pages] = 0
+        table.copy_(page_ids)
+        seq_lens.copy_(torch.tensor(lengths, device="npu", dtype=torch.int32))
+
     eager = []
     for lengths in length_sets:
-        seq_lens.copy_(torch.tensor(lengths, device="npu", dtype=torch.int32))
+        update_cache_metadata(lengths)
         actual = run().clone()
         refs = []
         for i, length in enumerate(lengths):
             length = max(length, 1)
-            start = i * pages_per_req
+            start = 1 + i * pages_per_req
             k = k_cpu[start : start + pages_per_req].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
             v = v_cpu[start : start + pages_per_req].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
             q = q_cpu[i * q_len : (i + 1) * q_len]
+            mask = None
+            if window is not None:
+                query_positions = torch.arange(length - q_len, length)[:, None]
+                offsets = torch.arange(length) - query_positions
+                mask = (offsets >= 1 - window) & (offsets <= (0 if causal else window - 1))
             refs.append(
                 F.scaled_dot_product_attention(
                     q.transpose(0, 1),
                     k.transpose(0, 1),
                     v.transpose(0, 1),
+                    attn_mask=mask,
                     scale=impl.scale,
                 ).transpose(0, 1)
             )
@@ -80,25 +112,25 @@ def test_fa4_draft_eager_and_graph_replay(head_size, dtype):
         eager.append(actual)
     assert not torch.allclose(eager[0].float(), eager[1].float(), atol=1e-3)
 
-    seq_lens.copy_(torch.tensor(length_sets[0], device="npu", dtype=torch.int32))
+    update_cache_metadata(length_sets[0])
     torch.npu.synchronize()
     graph = torch.npu.NPUGraph()
     with torch.npu.graph(graph):
         graph_output = run()
     for index in (1, 0):
-        seq_lens.copy_(torch.tensor(length_sets[index], device="npu", dtype=torch.int32))
+        update_cache_metadata(length_sets[index])
         graph.replay()
         torch.npu.synchronize()
         torch.testing.assert_close(graph_output, eager[index], atol=1e-3, rtol=1e-3)
 
 
 @pytest.mark.parametrize(
-    "max_query_len,pages_per_req,stride_factor",
-    [(4, 2, 1), (2051, 20, 3)],
-    ids=["short-contiguous", "long-strided"],
+    "max_query_len,pages_per_req,stride_factor,window",
+    [(4, 2, 1, None), (2051, 20, 3, None), (4, 2, 2, 64)],
+    ids=["short-contiguous", "long-strided", "window-strided"],
 )
 @torch.inference_mode()
-def test_fa4_causal_ragged_replay_after_rejection(max_query_len, pages_per_req, stride_factor):
+def test_fa4_causal_ragged_replay_after_rejection(max_query_len, pages_per_req, stride_factor, window):
     if "Ascend910" not in torch.npu.get_device_name():
         pytest.skip("FA4 AICPU metadata requires Ascend910")
     torch.manual_seed(0)
@@ -135,6 +167,7 @@ def test_fa4_causal_ragged_replay_after_rejection(max_query_len, pages_per_req, 
     impl.num_heads, impl.num_kv_heads, impl.head_size = heads, kv_heads, head_size
     impl.scale = head_size**-0.5
     impl.use_bnsd_kv_cache = False
+    impl.sliding_window = window
 
     def set_batch(query_offsets, kv_lengths, page_ids):
         for buffer, data in ((offsets, query_offsets), (lengths, kv_lengths), (table, page_ids)):
@@ -166,7 +199,11 @@ def test_fa4_causal_ragged_replay_after_rejection(max_query_len, pages_per_req, 
             keys = k_cpu[page_ids[row]].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
             values = v_cpu[page_ids[row]].flatten(0, 1)[:length].repeat_interleave(heads // kv_heads, dim=1)
             q = q_cpu[start:end].transpose(0, 1)
-            mask = torch.ones(end - start, length, dtype=torch.bool).tril(length - (end - start))
+            query_positions = torch.arange(length - (end - start), length)[:, None]
+            offsets = torch.arange(length) - query_positions
+            mask = offsets <= 0
+            if window is not None:
+                mask &= offsets >= 1 - window
             expected[start:end] = F.scaled_dot_product_attention(
                 q, keys.transpose(0, 1), values.transpose(0, 1), attn_mask=mask, scale=impl.scale
             ).transpose(0, 1)

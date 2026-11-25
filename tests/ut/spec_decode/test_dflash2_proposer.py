@@ -3,11 +3,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from vllm.config import AttentionConfig
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
+from vllm.v1.kv_cache_interface import KVCacheSpecKind
 
 from vllm_ascend.models.qwen3_dflash2 import (
     DFlash2Qwen3DecoderLayer,
     DFlash2Qwen3ForCausalLM,
     DFlash2Qwen3Model,
+    _dflash2_window_attention_context,
     _grouped_conv,
     _score_edges,
 )
@@ -78,6 +82,30 @@ def test_dflash2_declares_main_factory_classes():
     """vLLM #52816 constructs DFlash subclasses through class factories."""
     assert DFlash2Qwen3Model.decoder_layer_cls is DFlash2Qwen3DecoderLayer
     assert DFlash2Qwen3ForCausalLM.model_cls is DFlash2Qwen3Model
+
+
+@pytest.mark.parametrize("mode", ["draft_fa4", "target_fa4", "off", "v1"])
+def test_dflash2_opts_into_fa4_window_with_draft_local_config(monkeypatch, mode):
+    monkeypatch.setenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "2" if mode in ("draft_fa4", "v1") else "0")
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "1" if mode == "target_fa4" else "0")
+    full_kind = KVCacheSpecKind.FULL_ATTENTION.value
+    window_kind = KVCacheSpecKind.SLIDING_WINDOW.value
+    backends = {full_kind: AttentionBackendEnum.CUSTOM} if mode == "target_fa4" else {}
+    config = SimpleNamespace(
+        use_v2_model_runner=mode != "v1",
+        attention_config=AttentionConfig(backend_per_kind=backends),
+        speculative_config=SimpleNamespace(attention_backend=None),
+        compilation_config=object(),
+    )
+    with patch("vllm_ascend.models.qwen3_dflash2.set_current_vllm_config") as set_context:
+        _dflash2_window_attention_context(config)
+    if mode in ("draft_fa4", "target_fa4"):
+        draft_config = set_context.call_args.args[0]
+        assert draft_config.attention_config.backend_per_kind == {**backends, window_kind: AttentionBackendEnum.CUSTOM}
+        assert config.compilation_config is draft_config.compilation_config
+    else:
+        set_context.assert_not_called()
+    assert window_kind not in config.attention_config.backend_per_kind
 
 
 def _reference_walk(candidate_ids: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:

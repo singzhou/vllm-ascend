@@ -25,7 +25,7 @@ from vllm_ascend.attention.attention_c8_mxfp import (
     mxfp_v_scale_cache_shape,
 )
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
-from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend, AscendFA4WindowBackend
 from vllm_ascend.attention.fia_sink_v1 import AscendFIASinkBackend
 from vllm_ascend.attention.mla_v1 import AscendMLAImpl
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNAttentionBackend, AscendGDNAttentionMetadataBuilder
@@ -1919,7 +1919,9 @@ def test_flashmla_cpu_length_sync_bypass_does_not_copy_or_record_event():
     runner.num_computed_tokens_event.record.assert_not_called()
 
 
-@pytest.mark.parametrize("blocker", [None, "draft_fia", "causal_draft", "missing_group", "pp", "pcp", "dcp", "av"])
+@pytest.mark.parametrize(
+    "blocker", [None, "draft_fia", "causal_draft", "causal_window", "missing_group", "pp", "pcp", "dcp", "av"]
+)
 def test_fa4_cpu_length_sync_bypass_checks_active_draft_paths(blocker):
     runner = _make_runner()
     runner._use_fa4_target_attention = True
@@ -1932,19 +1934,21 @@ def test_fa4_cpu_length_sync_bypass_checks_active_draft_paths(blocker):
         decode_context_parallel_size=2 if blocker == "dcp" else 1,
     )
     runner.ascend_config.kvpp_config = SimpleNamespace(size=1)
+    second_backend = {
+        "draft_fia": AscendAttentionBackend,
+        "causal_window": AscendFA4WindowBackend,
+    }.get(blocker, AscendFIASinkBackend)
+    group_causal = {0: False}
+    if blocker != "missing_group":
+        group_causal[1] = blocker in ("causal_draft", "causal_window")
     runner.speculator = SimpleNamespace(
-        _group_causal={0: False, **({1: blocker == "causal_draft"} if blocker != "missing_group" else {})},
+        _group_causal=group_causal,
         attn_groups=[
             [SimpleNamespace(backend=AscendFA4Backend, kv_cache_group_id=0)],
-            [
-                SimpleNamespace(
-                    backend=AscendAttentionBackend if blocker == "draft_fia" else AscendFIASinkBackend,
-                    kv_cache_group_id=1,
-                )
-            ],
+            [SimpleNamespace(backend=second_backend, kv_cache_group_id=1)],
         ],
     )
-    assert runner._can_skip_spec_cpu_length_sync() is (blocker is None)
+    assert runner._can_skip_spec_cpu_length_sync() is (blocker in (None, "causal_window"))
 
 
 @pytest.mark.parametrize(

@@ -95,25 +95,41 @@ def test_init_speculator_routes_dflash2_draft_model():
         d2.assert_not_called()
 
 
-def test_init_cudagraph_manager_requires_enforce_eager(monkeypatch):
+@pytest.mark.parametrize(
+    ("enforce_eager", "expected_mode"),
+    [(False, CUDAGraphMode.FULL_DECODE_ONLY), (None, CUDAGraphMode.FULL_DECODE_ONLY), (True, CUDAGraphMode.NONE)],
+)
+def test_init_cudagraph_manager_preserves_graph_mode(monkeypatch, enforce_eager, expected_mode):
     calls: list[CUDAGraphMode] = []
-    monkeypatch.setattr(
-        "vllm_ascend.worker.v2.spec_decode.dflash.speculator.AscendDFlashSpeculator.init_cudagraph_manager",
-        lambda self, mode: calls.append(mode),
-    )
     speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.speculative_config = SimpleNamespace(enforce_eager=enforce_eager)
+    speculator.update_stream = object()
 
-    # Eager drafting forces the draft aclgraph manager to NONE.
-    speculator.speculative_config = SimpleNamespace(enforce_eager=True)
+    def initialize_parent(self, mode):
+        calls.append(mode)
+        self.query_cudagraph_manager = SimpleNamespace()
+
+    monkeypatch.setattr(DFlashSpeculator, "init_cudagraph_manager", initialize_parent)
     speculator.init_cudagraph_manager(CUDAGraphMode.FULL_DECODE_ONLY)
-    assert calls == [CUDAGraphMode.NONE]
 
-    # Graph mode is rejected until the Ascend walk kernel is capturable, and
-    # must fail before delegating to the parent manager.
-    speculator.speculative_config = SimpleNamespace(enforce_eager=False)
-    with pytest.raises(NotImplementedError, match="graph mode"):
-        speculator.init_cudagraph_manager(CUDAGraphMode.FULL_DECODE_ONLY)
-    assert calls == [CUDAGraphMode.NONE]
+    assert calls == [expected_mode]
+    assert speculator.query_cudagraph_manager.speculator is speculator
+    assert speculator.query_cudagraph_manager.update_stream is speculator.update_stream
+
+
+def test_graph_replay_pads_fia_lengths_and_keeps_fa4_device_lengths():
+    speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.num_query_per_req = 8
+    speculator.input_batch = SimpleNamespace(num_reqs=2)
+    fia = SimpleNamespace(seq_lens_list=[321, 46, 0, 0])
+    fa4 = SimpleNamespace(seq_lens_list=None, seq_lens=torch.tensor([321, 46, 0, 0]))
+
+    speculator._update_draft_attn_metadata({"fia": fia, "fa4": fa4}, num_reqs_padded=4)
+
+    assert fia.actual_seq_lengths_q == [8, 16, 24, 32]
+    assert fia.seq_lens_list == [321, 46, 8, 8]
+    assert fa4.seq_lens_list is None
+    assert fa4.seq_lens.tolist() == [321, 46, 0, 0]
 
 
 def test_greedy_walk_contract_reference():

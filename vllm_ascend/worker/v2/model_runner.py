@@ -67,7 +67,7 @@ from vllm_ascend.attention.attention_c8_mxfp import (
     fill_mxfp_v_scale_cache,
 )
 from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
-from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4Backend, AscendFA4TargetBackend, AscendFA4WindowBackend
 from vllm_ascend.attention.fia_sink_v1 import AscendFIASinkBackend
 from vllm_ascend.attention.flashmla import prepare_flashmla_batch_req_state
 from vllm_ascend.attention.mla_v1 import AscendMLABackend, all_mla_use_flashmla
@@ -1468,9 +1468,12 @@ class NPUModelRunner(GPUModelRunner):
         group_causal = self.speculator._group_causal
         draft_groups = [group for groups in self.speculator.attn_groups for group in groups]
         return bool(draft_groups) and all(
-            group.backend in (AscendFA4Backend, AscendFIASinkBackend)
-            and not (
-                group_causal.get(group.kv_cache_group_id, True) if isinstance(group_causal, dict) else group_causal
+            group.backend in (AscendFA4WindowBackend, AscendFA4TargetBackend)
+            or (
+                group.backend in (AscendFA4Backend, AscendFIASinkBackend)
+                and not (
+                    group_causal.get(group.kv_cache_group_id, True) if isinstance(group_causal, dict) else group_causal
+                )
             )
             for group in draft_groups
         )

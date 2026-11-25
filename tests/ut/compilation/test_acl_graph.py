@@ -136,6 +136,9 @@ class TestACLGraphWrapper(TestBase):
         self.mock_updatable_graph = self.exit_stack.enter_context(
             patch("vllm_ascend.compilation.acl_graph.UpdatableGraph")
         )
+        self.mock_is_forward_context_available = self.exit_stack.enter_context(
+            patch("vllm_ascend.compilation.acl_graph.is_forward_context_available", return_value=True)
+        )
 
         # Mock VllmConfig
         self.mock_vllm_config = MagicMock(spec=VllmConfig)
@@ -216,6 +219,24 @@ class TestACLGraphWrapper(TestBase):
             ACLGraphWrapper(
                 runnable=self.mock_runnable, vllm_config=self.mock_vllm_config, runtime_mode=CUDAGraphMode.NONE
             )
+
+    @patch("vllm_ascend.compilation.acl_graph.current_platform")
+    @patch("vllm_ascend.compilation.acl_graph.get_forward_context")
+    def test_call_without_forward_context(self, mock_get_forward_context, _mock_current_platform):
+        self.mock_is_forward_context_available.return_value = False
+        output = object()
+        wrapper = ACLGraphWrapper(
+            runnable=Mock(return_value=output),
+            vllm_config=self.mock_vllm_config,
+            runtime_mode=CUDAGraphMode.PIECEWISE,
+            cudagraph_options=self.mock_cudagraph_options,
+        )
+
+        self.assertIs(wrapper("arg", keyword="value"), output)
+        wrapper.runnable.assert_called_once_with("arg", keyword="value")
+        mock_get_forward_context.assert_not_called()
+        self.mock_updatable_graph.assert_not_called()
+        self.assertEqual(wrapper.concrete_aclgraph_entries, {})
 
     @patch("vllm_ascend.ascend_forward_context.get_forward_context")
     @patch("vllm_ascend.compilation.acl_graph.get_forward_context")

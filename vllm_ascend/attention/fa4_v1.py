@@ -15,7 +15,7 @@
 # limitations under the License.
 # This file is a part of the vllm-ascend project.
 #
-"""FA4 AICPU tiling for parallel drafting and causal DSpark verification.
+"""FA4 AICPU tiling for parallel drafting and causal verification.
 
 VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=2 selects this backend.
 Metadata and attention are captured together so replay reads the rejected-token
@@ -74,21 +74,21 @@ def fa4_selected(attn_selector_config: object) -> bool:
     )
 
 
-def fa4_target_compatible(config) -> bool:
-    """Check the cached selector key for the Qwen target and DSpark draft."""
+def fa4_target_compatible(config, *, windowed_draft: bool = False) -> bool:
+    """Check the cached selector key for the Qwen target and parallel draft."""
     return (
         config.attn_type == AttentionType.DECODER
-        and config.head_size in ((128, 256) if config.use_non_causal else (256,))
+        and config.head_size in ((128, 256) if windowed_draft or config.use_non_causal else (256,))
         and config.dtype in (torch.float16, torch.bfloat16)
         and config.kv_cache_dtype in (None, "auto", "bfloat16", "float16")
-        and not config.has_sliding_window
+        and config.has_sliding_window == windowed_draft
         and not config.has_sink
         and not config.use_mm_prefix
         and not config.use_per_head_quant_scales
         and not config.use_batch_invariant
         and not config.use_kv_connector
         and not config.use_dcp
-        and not (config.use_non_causal and config.use_adaptive_verification)
+        and not ((windowed_draft or config.use_non_causal) and config.use_adaptive_verification)
         and not config.use_rswa
     )
 
@@ -162,13 +162,20 @@ def _fa4_cache_views(
 class AscendFA4MetadataBuilder(AscendAttentionMetadataBuilder):
     """Leave non-causal draft lengths on device, including during graph replay."""
 
+    supports_causal_fa4 = False
+
     def __init__(self, kv_cache_spec, layer_names, vllm_config, device):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device)
         speculative_config = vllm_config.speculative_config
         if not (speculative_config is not None and getattr(speculative_config, "parallel_drafting", False)):
             raise RuntimeError("The Ascend FA4 backend cannot serve a model without parallel drafting.")
         _load_fa4()
-        logger.info("Ascend FA4 backend selected for %d draft attention layer(s): %s", len(layer_names), layer_names)
+        logger.info(
+            "Ascend FA4 backend selected for %d draft attention layer(s) (%s): %s",
+            len(layer_names),
+            "sliding window" if self.supports_causal_fa4 else "full attention",
+            layer_names,
+        )
 
     def _build_fia_seq_inputs(
         self,
@@ -180,7 +187,7 @@ class AscendFA4MetadataBuilder(AscendAttentionMetadataBuilder):
     ) -> tuple[torch.Tensor, list[int] | None, list[int] | None, torch.Tensor, torch.Tensor | None]:
         # DFlash can mix causal and non-causal cache groups. Keep builder and
         # forward fallback in agreement; the ordinary path needs host lists.
-        if common_attn_metadata.causal:
+        if common_attn_metadata.causal and not self.supports_causal_fa4:
             return super()._build_fia_seq_inputs(
                 common_attn_metadata, num_reqs, query_start_loc_cpu, seq_lens, block_table
             )
@@ -214,6 +221,11 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
         num_tokens = attn_metadata.num_actual_tokens
         seq_lens = attn_metadata.seq_lens
         num_reqs = seq_lens.shape[0]
+        window = (-1, -1)
+        if self.sliding_window is not None:
+            # FA4 counts inclusive offsets from the bottom-right aligned query.
+            left = self.sliding_window - 1
+            window = (left, 0 if causal else left)
         cu_seqlens_q = attn_metadata.query_start_loc if causal else None
         max_seqlen_q = attn_metadata.max_query_len if causal else num_tokens // max(num_reqs, 1)
         context = None
@@ -222,7 +234,7 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
             if block_table.shape[0] < num_reqs:
                 raise RuntimeError("FA4 block table has fewer rows than requests.")
             # FA4's kernel uses a packed row stride derived from max_seqlen_k.
-            if causal and not self.key_cache.is_contiguous():
+            if (causal or self.sliding_window is not None) and not self.key_cache.is_contiguous():
                 context = get_forward_context()
             key, value, block_table = _fa4_cache_views(
                 self.key_cache,
@@ -250,6 +262,7 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
             seq_lens.data_ptr(),
             seq_lens.stride(),
             causal,
+            window,
             cu_seqlens_q.data_ptr() if cu_seqlens_q is not None else None,
             max_seqlen_q,
             num_tokens,
@@ -283,8 +296,8 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
                 seqused_k=cache_seqlens,
                 cu_seqlens_q=cu_seqlens_q,
                 causal=causal,
-                window_size_left=-1,
-                window_size_right=-1,
+                window_size_left=window[0],
+                window_size_right=window[1],
                 num_splits=0,
                 **dense_kv_offsets,
             )
@@ -306,7 +319,7 @@ class AscendFA4Impl(AscendAttentionBackendImpl):
             max_seqlen_k=max_seqlen_k,
             softmax_scale=self.scale,
             causal=causal,
-            window_size=(-1, -1),
+            window_size=window,
             scheduler_metadata=scheduler_metadata,
             num_splits=0,
             return_lse=False,
@@ -326,6 +339,28 @@ class AscendFA4Backend(AscendAttentionBackend):
     @staticmethod
     def get_builder_cls() -> type["AscendFA4MetadataBuilder"]:
         return AscendFA4MetadataBuilder
+
+
+class AscendFA4WindowMetadataBuilder(AscendFA4MetadataBuilder):
+    requires_attention_mask = False
+    supports_causal_fa4 = True
+
+    def _select_seq_lens(self, common_attn_metadata: AscendCommonAttentionMetadata) -> torch.Tensor:
+        return common_attn_metadata.seq_lens
+
+
+class AscendFA4WindowImpl(AscendFA4Impl):
+    supports_causal_fa4 = True
+
+
+class AscendFA4WindowBackend(AscendFA4Backend):
+    @staticmethod
+    def get_impl_cls() -> type[AscendFA4WindowImpl]:
+        return AscendFA4WindowImpl
+
+    @staticmethod
+    def get_builder_cls() -> type[AscendFA4WindowMetadataBuilder]:
+        return AscendFA4WindowMetadataBuilder
 
 
 class AscendFA4TargetMetadataBuilder(AscendAttentionMetadataBuilder):

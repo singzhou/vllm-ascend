@@ -389,13 +389,16 @@ A few important things to consider when using DFlash2 draft models:
       --tensor-parallel-size 2 \
       --max-model-len 2048 \
       --no-enable-prefix-caching \
-      --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 8, "enforce_eager": true}'
+      --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [9]}' \
+      --additional-config '{"ascend_compilation_config": {"enable_npugraph_ex": false}}' \
+      --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 8, "enforce_eager": false}'
     ```
 
-2. **Model runner V2 requires an eager draft**: DFlash2 on model runner V2
-   does not yet support graph mode for the draft. Set `"enforce_eager": true`
-   in `speculative_config`; the target model keeps its own graph mode (e.g.
-   `FULL_DECODE_ONLY`).
+2. **Draft graph execution on Model Runner V2**: DFlash2 uses full ACL graphs
+   for compatible decode batches under `FULL_DECODE_ONLY` or
+   `FULL_AND_PIECEWISE`. Set `"enforce_eager": true` in
+   `speculative_config` to run the draft eagerly while keeping the target's
+   graph mode. Checkpoints with native sliding-window attention require MRV2.
 
 3. **Graph capture sizes**: each decode step runs `(1 + K)` tokens per
    request, so every capture size must be `n * (num_speculative_tokens + 1)`
@@ -1043,8 +1046,7 @@ The configuration interface (`rejection_sample_method`, `synthetic_acceptance_ra
 
 ## Attention backend selection for parallel drafts
 
-Set `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK` to select non-causal DSpark/DFlash
-draft attention:
+Set `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK` to select DSpark/DFlash draft attention:
 
 - `0`: ordinary attention (default).
 - `1`: omni FIA sink (`AscendFIASinkBackend`), requiring `omni_custom_ops` and
@@ -1057,20 +1059,31 @@ worker; the FA4 path does not require `omni_custom_ops`.
 
 The backend keeps KV lengths on device and captures AICPU metadata generation
 with attention, so ACL graph replay uses the updated lengths after verification.
-It uses the shared NHD paged KV cache and FP16/BF16 inputs. Sliding-window,
-learnable-sink, MLA, PCP and Ascend310P layers retain their existing selection.
-Causal DFlash KV groups retain the ordinary attention path. Startup logs include
-`Ascend FA4 backend selected` when a draft uses this backend.
+It uses the shared NHD paged KV cache and FP16/BF16 inputs. DFlash2 native
+sliding-window groups can also select FA4 with mode `2`. Learnable-sink,
+MLA, PCP and Ascend310P layers retain their existing selection. Startup logs
+include `Ascend FA4 backend selected` when a draft uses this backend.
 
-Set `VLLM_ASCEND_FA4_TARGET_ATTN=1` to also use causal FA4 for Qwen3.6 + DSpark
-on the V2 model runner with Ascend910B/C. The target head dimension must be 256.
+Set `VLLM_ASCEND_FA4_TARGET_ATTN=1` to also use causal FA4 for Qwen GDN
+targets with DSpark or DFlash2 on the V2 model runner with Ascend910B/C.
+The target head dimension must be 256.
 The draft head dimension can be 128 or 256. Both models require FP16/BF16 compute
-and unquantized NHD KV cache. The flag defaults to `0`. The draft defaults
-to FA4, and `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` still selects the Omni draft
-backend. When all target and draft groups consume device lengths, the runner
+and unquantized NHD KV cache. The flag defaults to `0`. Compatible draft
+groups default to FA4. `VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK=1` selects the Omni
+backend for compatible full-attention draft groups. When all target and draft
+groups consume device lengths, the runner
 skips the speculative KV length copy and host wait. Pipeline/context
 parallelism, sparse offload and KV transfer use their existing paths. Check the startup log for
 `Speculative CPU length synchronization bypass enabled: True`.
+
+For DFlash2 checkpoints with native sliding-window layers, use MRV2. It
+reads the window and per-group causality from the checkpoint, including
+checkpoints with both full-attention and sliding-window draft layers.
+Ordinary FIA supports causal and non-causal sliding windows for FP16/BF16
+with unquantized KV, no learnable sinks and no context parallelism.
+To select FA4 for compatible draft groups, use a `flash-attention-npu` wheel
+that supports paged sliding-window attention with AICPU scheduler metadata.
+The MRV1 `draft_window_size` override applies separately.
 
 For Qwen3.6/3.8 with DSpark adaptive verification, the same flag selects
 causal FA4 on the Ascend ragged decode path. Pass

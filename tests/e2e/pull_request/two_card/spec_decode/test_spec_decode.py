@@ -27,7 +27,7 @@ import os
 import pytest
 from transformers import AutoTokenizer
 from vllm import SamplingParams
-from vllm.config import CompilationConfig
+from vllm.config import CompilationConfig, CompilationMode
 from vllm.tokenizers.registry import resolve_tokenizer_args
 from vllm.v1.metrics.reader import Counter, Vector
 
@@ -382,8 +382,13 @@ def test_dflash2_v2_acceptance(
         "method": "dflash",
         "model": spec_model_name,
         "num_speculative_tokens": num_speculative_tokens,
-        "enforce_eager": True,
+        "enforce_eager": False,
     }
+    compilation_config = CompilationConfig(
+        mode=CompilationMode.VLLM_COMPILE,
+        cudagraph_mode="FULL_DECODE_ONLY",
+        cudagraph_capture_sizes=[num_speculative_tokens + 1],
+    )
 
     with VllmRunner(
         main_model_name,
@@ -394,9 +399,12 @@ def test_dflash2_v2_acceptance(
         distributed_executor_backend="mp",
         gpu_memory_utilization=0.9,
         speculative_config=speculative_config,
-        enforce_eager=True,
+        enforce_eager=False,
+        compilation_config=compilation_config,
+        additional_config={"ascend_compilation_config": {"enable_npugraph_ex": False}},
         enable_prefix_caching=False,
     ) as llm:
+        assert llm.model.llm_engine.vllm_config.use_v2_model_runner
         outputs = llm.model.generate(prompts, sampling_params)
         metrics = llm.model.get_metrics()
 

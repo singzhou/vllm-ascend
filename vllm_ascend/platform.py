@@ -330,14 +330,21 @@ class NPUPlatform(Platform):
                 return "vllm_ascend.attention.fia_sink_v1.AscendFIASinkBackend"
             if fa4_selected(attn_selector_config):
                 return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
-            if (
-                envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN
-                and selected_backend is AttentionBackendEnum.CUSTOM
-                and fa4_target_compatible(attn_selector_config)
+            if selected_backend is AttentionBackendEnum.CUSTOM and envs_vllm.VLLM_KV_CACHE_LAYOUT not in (
+                "LBHNC",
+                "HND",
             ):
-                if attn_selector_config.use_non_causal:
-                    return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
-                return "vllm_ascend.attention.fa4_v1.AscendFA4TargetBackend"
+                if (
+                    attn_selector_config.has_sliding_window
+                    and (envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN or envs_ascend.VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK == 2)
+                    and get_current_hardware_profile().supports(HardwareCapability.FA4_CAUSAL_DEVICE_LENGTHS)
+                    and fa4_target_compatible(attn_selector_config, windowed_draft=True)
+                ):
+                    return "vllm_ascend.attention.fa4_v1.AscendFA4WindowBackend"
+                if envs_ascend.VLLM_ASCEND_FA4_TARGET_ATTN and fa4_target_compatible(attn_selector_config):
+                    if attn_selector_config.use_non_causal:
+                        return "vllm_ascend.attention.fa4_v1.AscendFA4Backend"
+                    return "vllm_ascend.attention.fa4_v1.AscendFA4TargetBackend"
 
         if attn_selector_config.use_pcp:
             pcp_backend_map = {
@@ -820,8 +827,11 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         or model.get_head_size() != 256
         or model.dtype not in supported_dtypes
         or spec is None
-        or not spec.use_dspark()
         or spec.draft_model_config is None
+        or not (
+            spec.use_dspark()
+            or (spec.method == "dflash" and "DFlash2DraftModel" in (spec.draft_model_config.architectures or ()))
+        )
         or spec.draft_model_config.get_head_size() not in (128, 256)
         or spec.draft_model_config.dtype not in supported_dtypes
         or (spec.kv_cache_dtype is not None and spec.kv_cache_dtype not in supported_cache_dtypes)
@@ -837,6 +847,8 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
         return
 
     if spec.enable_adaptive_verification:
+        if not spec.use_dspark():
+            return
         from vllm.config.compilation import CUDAGraphMode
 
         from vllm_ascend.worker.v2.spec_decode.dspark.av_config import (
@@ -891,8 +903,8 @@ def _configure_fa4_target_attention(vllm_config: VllmConfig, ascend_config: Asce
             )
             return
 
-    # Carry the opt-in through vLLM's memoized selector. DSpark copies this
-    # per-kind configuration into its draft config, with use_non_causal set.
+    # Carry the opt-in through vLLM's memoized selector. The draft loader
+    # copies this per-kind configuration into its own attention config.
     backends = vllm_config.attention_config.backend_per_kind
     vllm_config.attention_config.backend_per_kind = {
         **backends,

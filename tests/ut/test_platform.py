@@ -2585,10 +2585,39 @@ def test_parallel_draft_attention_backend_selection(mode, expected):
     assert selected == expected
 
 
+@pytest.mark.parametrize("non_causal", [False, True])
+@pytest.mark.parametrize("blocker", [None, "unmarked", "disabled", "sink", "dcp", "dtype"])
+def test_fa4_window_selection(monkeypatch, non_causal, blocker):
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "0")
+    monkeypatch.setenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0" if blocker == "disabled" else "2")
+    selector = AttentionSelectorConfig(
+        head_size=128,
+        dtype=torch.float32 if blocker == "dtype" else torch.bfloat16,
+        kv_cache_dtype="auto",
+        block_size=None,
+        has_sliding_window=True,
+        use_non_causal=non_causal,
+        has_sink=blocker == "sink",
+        use_dcp=blocker == "dcp",
+    )
+    selected_backend = None if blocker == "unmarked" else AttentionBackendEnum.CUSTOM
+    with (
+        patch("vllm_ascend.platform._validate_fa3_backend", return_value=False),
+        patch("vllm_ascend.platform.envs_vllm.VLLM_KV_CACHE_LAYOUT", "NHD"),
+        patch(
+            "vllm_ascend.platform.get_current_hardware_profile", return_value=get_hardware_profile(AscendDeviceType.A2)
+        ),
+    ):
+        selected = NPUPlatform.get_attn_backend_cls(selected_backend, selector)
+    assert selected.endswith(".AscendFA4WindowBackend" if blocker is None else ".AscendAttentionBackend")
+
+
 @pytest.mark.parametrize(
     "blocker",
     [
         None,
+        "dflash2",
+        "plain_dflash",
         "flag_off",
         "dcp",
         "kv_quant",
@@ -2614,7 +2643,8 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
     monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_ADAPT", "0" if blocker == "av_upstream" else "1")
     monkeypatch.setenv("VLLM_ASCEND_DSPARK_AV_GRAPH", "uniform" if blocker == "av_uniform" else "ragged")
     use_av = bool(blocker and blocker.startswith("av_"))
-    expect_fa4 = blocker in (None, "av_ragged")
+    is_dflash = blocker in ("dflash2", "plain_dflash")
+    expect_fa4 = blocker in (None, "dflash2", "av_ragged")
     target_head = 128 if blocker == "target_head" else 256
     target_dtype = torch.float32 if blocker == "target_dtype" else torch.bfloat16
     draft_head = 64 if blocker == "draft_head" else 128
@@ -2630,13 +2660,14 @@ def test_qwen_fa4_target_and_draft_selection(monkeypatch, blocker):
             enforce_eager=False,
         ),
         speculative_config=SimpleNamespace(
-            method="dspark",
-            use_dspark=lambda: True,
+            method="dflash" if is_dflash else "dspark",
+            use_dspark=lambda: not is_dflash,
             enable_adaptive_verification=use_av,
             num_speculative_tokens=7,
             draft_model_config=SimpleNamespace(
                 get_head_size=lambda: draft_head,
                 dtype=torch.bfloat16,
+                architectures=["DFlash2DraftModel" if blocker == "dflash2" else "DFlashDraftModel"],
                 hf_config=SimpleNamespace(enable_confidence_head=blocker != "av_no_confidence_head"),
             ),
             attention_backend=AttentionBackendEnum.FLASH_ATTN if blocker == "av_draft_backend" else None,
