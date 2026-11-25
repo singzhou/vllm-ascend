@@ -66,10 +66,9 @@ from vllm_ascend.worker.v2.spec_decode.tree.draft import TreeDraftMixin, build_d
 class AscendDSparkSpeculator(TreeDraftMixin, LmheadTPDraftSamplingMixin, DSparkSpeculator):
     _speculator_name = "DSpark"
     # DSpark samples via compute_draft_logits and never calls sample_draft, so
-    # the mixin sample_draft alignment is not used; instead load_draft_model
-    # wraps the draft model's compute_draft_logits to pad the LM-head input to
-    # the group-agreed capacity and trim the logits back (no _sample_sequential
-    # override, upstream sampling logic untouched).
+    # the mixin sample_draft alignment is not used. load_draft_model wraps
+    # compute_draft_logits to pad the LM-head input to the group-agreed
+    # capacity and trim the logits back for both chain and tree proposals.
     _lmhead_tp_sample_draft_supported = True
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
@@ -485,7 +484,7 @@ class AscendDSparkSpeculator(TreeDraftMixin, LmheadTPDraftSamplingMixin, DSparkS
         )
         return hidden_states
 
-    def propose(
+    def _propose_draft(
         self,
         input_batch: InputBatch,
         attn_metadata: dict[str, Any],
@@ -539,7 +538,7 @@ class AscendDSparkSpeculator(TreeDraftMixin, LmheadTPDraftSamplingMixin, DSparkS
                 parallel_config=self.attn_vllm_config.parallel_config,
             ),
         ):
-            return super().propose(
+            return super()._propose_draft(
                 input_batch,
                 attn_metadata,
                 slot_mappings,

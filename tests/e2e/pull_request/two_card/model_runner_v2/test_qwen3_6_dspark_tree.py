@@ -1,9 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from vllm import SamplingParams
+
 from tests.e2e.pull_request.two_card.model_runner_v2.test_qwen3_6_dspark import (
     QWEN36_DENSE_MODEL,
     QWEN36_DSPARK_DRAFT_MODEL,
 )
+
+
+def _install_tree_verification_probe(worker):
+    runner = worker.model_runner
+    sample = runner.sample
+    worker.verified_tree_rows = 0
+
+    def observe_tree_verification(hidden_states, input_batch, grammar_output):
+        result = sample(hidden_states, input_batch, grammar_output)
+        tree = getattr(input_batch, "tree_batch", None)
+        if tree is not None:
+            worker.verified_tree_rows += len(tree.verified)
+        return result
+
+    runner.sample = observe_tree_verification
+
+
+def _read_verified_tree_rows(worker):
+    return worker.verified_tree_rows
 
 
 def test_qwen_dspark_tree_matches_greedy_chain(vllm_runner, monkeypatch):
@@ -31,12 +52,17 @@ def test_qwen_dspark_tree_matches_greedy_chain(vllm_runner, monkeypatch):
             "draft_sample_method": "greedy",
         },
     )
+    sampling_params = SamplingParams(temperature=0, max_tokens=64, ignore_eos=True)
     with vllm_runner(QWEN36_DENSE_MODEL, **runner_kwargs) as runner:
-        baseline = runner.generate_greedy(prompts, max_tokens=64)
+        baseline = runner.model.generate(prompts, sampling_params, use_tqdm=False)
     with vllm_runner(
         QWEN36_DENSE_MODEL,
         **runner_kwargs,
         additional_config={"tree_spec_config": {"enabled": True, "topk": 3}},
     ) as runner:
-        tree = runner.generate_greedy(prompts, max_tokens=64)
-    assert [ids for ids, _ in tree] == [ids for ids, _ in baseline]
+        runner.model.collective_rpc(_install_tree_verification_probe)
+        tree = runner.model.generate(prompts, sampling_params, use_tqdm=False)
+        verified_rows = runner.model.collective_rpc(_read_verified_tree_rows)
+    assert len(verified_rows) == runner_kwargs["tensor_parallel_size"]
+    assert all(count > 0 for count in verified_rows), "DSpark did not verify a tree on every TP worker"
+    assert [output.outputs[0].token_ids for output in tree] == [output.outputs[0].token_ids for output in baseline]

@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 from vllm.model_executor.model_loader.utils import get_model_cls
@@ -20,6 +21,7 @@ from vllm_ascend.models.qwen3_dspark import (
 from vllm_ascend.worker.v2.spec_decode.dspark.speculator import (
     AscendDSparkSpeculator,
 )
+from vllm_ascend.worker.v2.spec_decode.tree.layout import TreeBatch
 
 _HIDDEN = 8
 
@@ -150,6 +152,69 @@ def test_configures_capture_after_loading_draft(monkeypatch):
 
     assert spec.load_draft_model(target, set()) is draft
     assert events == [("load", None), ("capture", True)]
+
+
+def test_propose_publishes_a_branched_tree_alongside_chain_drafts(monkeypatch):
+    spec = AscendDSparkSpeculator.__new__(AscendDSparkSpeculator)
+    spec.replicated_pcp = False
+    spec.enable_adaptive_verification = False
+    spec.use_dcp = False
+    spec.num_speculative_steps = 3
+    spec.max_num_tokens = 8
+    spec.sample_indices = torch.arange(6)
+    spec._anchor_idx = torch.tensor([0, 3])
+    spec._draft_topk = None
+    spec.input_buffers = SimpleNamespace(input_ids=torch.zeros(6, dtype=torch.long), positions=torch.arange(6))
+    spec.attn_vllm_config = SimpleNamespace(parallel_config=None)
+    spec.draft_tokens = torch.tensor([[9, 8, 7], [9, 8, 7]])
+    spec.model = SimpleNamespace(
+        model=SimpleNamespace(confidence_head=object()),
+        compute_draft_logits=lambda hidden: hidden.new_tensor([2.0, 1.0, -1.0, -2.0]).expand(hidden.shape[0], -1),
+        markov_embed=lambda tokens: tokens,
+        markov_bias=lambda tokens: torch.nn.functional.one_hot(tokens, num_classes=4) * 0.1,
+        compute_confidence=lambda hidden, tokens: hidden.new_full(tokens.shape, 0.25),
+        map_draft_to_target=lambda tokens: tokens,
+    )
+    spec.init_tree_drafting(topk=2)
+
+    module = "vllm_ascend.worker.v2.spec_decode.dspark.speculator"
+    monkeypatch.setattr(f"{module}.build_attn_metadata_wrapper", nullcontext)
+    monkeypatch.setattr(f"{module}.build_attn_metadata_factory", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(DSparkSpeculator, "_sample_sequential", lambda self, num_reqs, head_hidden: None)
+
+    def propose(self, batch, _attn_metadata, _slot_mappings, hidden, *args, **kwargs):
+        self._sample_sequential(batch.num_reqs, hidden)
+        return self.draft_tokens
+
+    monkeypatch.setattr(DSparkSpeculator, "propose", propose)
+    batch = SimpleNamespace(
+        num_reqs=2,
+        req_ids=["chain", "tree"],
+        is_prefilling_np=np.array([False, False]),
+        tree_draft_rows=(1,),
+        query_start_loc_np=[0, 1, 5],
+        num_computed_tokens_np=[4, 5],
+        positions=torch.tensor([4, 5, 6, 7, 8]),
+    )
+    hidden = torch.zeros(6, 2)
+    counts = torch.zeros(2, dtype=torch.int32)
+    proposal_inputs = ({}, {}, hidden, None, counts, counts, counts, counts, counts.float(), counts)
+
+    tokens = spec.propose(batch, *proposal_inputs)
+
+    assert tokens.tolist() == [[9, 8, 7], [0, 1, 0]]
+    assert spec.draft_tokens.tolist() == [[9, 8, 7], [9, 8, 7]]
+    assert set(spec.tree_proposals) == {"tree"}
+    layout = TreeBatch.from_schedule(batch, spec.tree_proposals, {"tree": tokens[1].tolist()})
+    (row,) = layout.tree_rows
+    assert row.parents == (0, 0, 0, 1)
+    assert row.walk([1, 3, 2, 3]) == ([1, 2], [2])
+
+    monkeypatch.setattr(DSparkSpeculator, "propose", lambda self, *args, **kwargs: self.draft_tokens)
+    with pytest.raises(RuntimeError, match="did not produce a draft tree"):
+        spec.propose(batch, *proposal_inputs)
+    assert spec._tree_draft_rows == ()
+    assert spec._draft_trees is None
 
 
 def test_process_weight_preserves_the_unrotated_projection():

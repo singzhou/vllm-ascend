@@ -130,7 +130,7 @@ def supports_tree_sampling(params):
 
 
 class TreeDraftMixin:
-    """Publish tree geometry alongside the existing fixed-width draft tokens."""
+    """Own proposal dispatch and publish geometry alongside fixed-width draft tokens."""
 
     def init_tree_drafting(self, topk):
         self.tree_topk = topk
@@ -139,19 +139,24 @@ class TreeDraftMixin:
         self._draft_trees = None
 
     def propose(self, input_batch, *args, **kwargs):
-        if not getattr(self, "tree_topk", 0):
-            return super().propose(input_batch, *args, **kwargs)
-        self._tree_draft_rows = getattr(input_batch, "tree_draft_rows", ())
-        self._draft_trees = None
+        rows = getattr(input_batch, "tree_draft_rows", ()) if getattr(self, "tree_topk", 0) else ()
+        if not rows:
+            return self._propose_draft(input_batch, *args, **kwargs)
+
+        self._tree_draft_rows = rows
         try:
-            tokens = super().propose(input_batch, *args, **kwargs)
-            if self._draft_trees is not None:
-                rows = self._tree_draft_rows
-                draft_ids = tokens.new_tensor([[node.token for node in tree] for tree in self._draft_trees])
-                tokens = tokens.clone()
-                tokens[list(rows)] = draft_ids
-                self.tree_proposals.update(zip((input_batch.req_ids[row] for row in rows), self._draft_trees))
+            tokens = self._propose_draft(input_batch, *args, **kwargs)
+            if self._draft_trees is None or len(self._draft_trees) != len(rows):
+                raise RuntimeError(f"{type(self).__name__} did not produce a draft tree for every eligible row")
+            draft_ids = tokens.new_tensor([[node.token for node in tree] for tree in self._draft_trees])
+            tokens = tokens.clone()
+            tokens[list(rows)] = draft_ids
+            self.tree_proposals.update(zip((input_batch.req_ids[row] for row in rows), self._draft_trees))
             return tokens
         finally:
             self._tree_draft_rows = ()
             self._draft_trees = None
+
+    def _propose_draft(self, input_batch, *args, **kwargs):
+        """Run the drafter; subclasses can override this hook to stage metadata."""
+        return super().propose(input_batch, *args, **kwargs)
