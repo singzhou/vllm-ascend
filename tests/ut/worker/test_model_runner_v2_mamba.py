@@ -23,6 +23,7 @@ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
 from vllm_ascend.core.kv_cache_interface import AscendMLAAttentionSpec
 from vllm_ascend.device.hardware import AscendDeviceType
 from vllm_ascend.device.hardware_profile import get_hardware_profile
+from vllm_ascend.ops.gdn_attn_builder import AscendGDNFusedAttentionBackend
 from vllm_ascend.worker.v2 import attn_utils
 from vllm_ascend.worker.v2.attn_utils import (
     _align_hybrid_attention_page_sizes,
@@ -131,6 +132,30 @@ def test_unwrap_uniform_mamba_groups_for_upstream_model_state():
     assert config.kv_cache_groups[0].kv_cache_spec is wrapped
 
 
+def test_tree_cache_binding_accepts_wrapped_mamba_groups():
+    spec = _mamba_spec()
+    config = _kv_cache_config(spec)
+    wrapped = UniformTypeKVCacheSpecs.from_specs({"linear_attn": spec})
+    assert wrapped is not None
+    config.kv_cache_groups[0].kv_cache_spec = wrapped
+    caches = tuple(torch.empty(3, *shape, dtype=dtype) for shape, dtype in zip(spec.shapes, spec.dtypes))
+    runner = SimpleNamespace(
+        kv_cache_config=config,
+        compilation_config=SimpleNamespace(
+            static_forward_context={
+                "linear_attn": SimpleNamespace(kv_cache=caches, get_attn_backend=lambda: AscendGDNFusedAttentionBackend)
+            }
+        ),
+        speculator=SimpleNamespace(draft_attn_layer_names=set()),
+    )
+
+    (binding,) = NPUModelRunner._bind_tree_target_caches(runner)
+
+    assert binding.group_id == 0
+    assert binding.recurrent
+    assert binding.caches == caches
+
+
 def test_unwrap_preserves_distinct_mamba_layouts():
     specs = {
         "mamba.0": _mamba_spec(),
@@ -161,9 +186,21 @@ def test_unwrap_preserves_distinct_mamba_layouts():
 def test_mamba_model_state_inherits_upstream_state_management():
     assert issubclass(AscendMambaHybridModelState, MambaHybridModelState)
     # preprocess_state is overridden on Ascend to defer the align pre-copy
-    # behind layerwise KV pool loads; postprocess stays upstream.
+    # behind layerwise KV pool loads.
     assert AscendMambaHybridModelState.preprocess_state is not MambaHybridModelState.preprocess_state
-    assert AscendMambaHybridModelState.postprocess_state is MambaHybridModelState.postprocess_state
+
+
+@pytest.mark.parametrize(("tree_enabled", "expected_num_sampled"), [(False, 4), (True, 1)])
+def test_mamba_postprocess_uses_committed_tree_state(tree_enabled, expected_num_sampled):
+    state = AscendMambaHybridModelState.__new__(AscendMambaHybridModelState)
+    state._tree_verification = tree_enabled
+    idx_mapping = torch.tensor([0])
+    num_computed_tokens = torch.tensor([9])
+
+    with patch.object(MambaHybridModelState, "postprocess_state", autospec=True) as postprocess:
+        state.postprocess_state(idx_mapping, 4, num_computed_tokens)
+
+    postprocess.assert_called_once_with(state, idx_mapping, expected_num_sampled, num_computed_tokens)
 
 
 def test_mrv2_advertises_standardized_shared_kv_backing():

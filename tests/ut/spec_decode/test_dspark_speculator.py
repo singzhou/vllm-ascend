@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
+from vllm.config.attention import AttentionConfig
 from vllm.model_executor.model_loader.utils import get_model_cls
 from vllm.model_executor.models import ModelRegistry
 from vllm.v1.worker.gpu.spec_decode.dspark.speculator import DSparkSpeculator
@@ -165,7 +166,8 @@ def test_propose_publishes_a_branched_tree_alongside_chain_drafts(monkeypatch):
     spec._anchor_idx = torch.tensor([0, 3])
     spec._draft_topk = None
     spec.input_buffers = SimpleNamespace(input_ids=torch.zeros(6, dtype=torch.long), positions=torch.arange(6))
-    spec.attn_vllm_config = SimpleNamespace(parallel_config=None)
+    spec.vllm_config = SimpleNamespace(parallel_config=None, attention_config=AttentionConfig())
+    spec.requires_non_causal = True
     spec.draft_tokens = torch.tensor([[9, 8, 7], [9, 8, 7]])
     spec.model = SimpleNamespace(
         model=SimpleNamespace(confidence_head=object()),

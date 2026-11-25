@@ -33,7 +33,7 @@ from vllm.logger import logger
 from vllm.sequence import IntermediateTensors
 from vllm.utils.torch_utils import async_tensor_h2d as async_copy_to_gpu
 from vllm.v1.core.sched.output import SchedulerOutput
-from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec, MambaSpec
+from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec, MambaSpec, UniformTypeKVCacheSpecs
 from vllm.v1.worker.dp_utils import skip_dp_coordination
 from vllm.v1.worker.gpu import model_runner as vllm_model_runner
 from vllm.v1.worker.gpu.cudagraph_utils import BatchExecutionDescriptor
@@ -610,7 +610,10 @@ class NPUModelRunner(GPUModelRunner):
         layers = self.compilation_config.static_forward_context
         draft_layers = self.speculator.draft_attn_layer_names
         for group_id, group in enumerate(self.kv_cache_config.kv_cache_groups):
-            recurrent = isinstance(group.kv_cache_spec, MambaSpec)
+            spec = group.kv_cache_spec
+            if isinstance(spec, UniformTypeKVCacheSpecs):
+                spec = spec.first_spec
+            recurrent = isinstance(spec, MambaSpec)
             allowed = (
                 (AscendGDNAttentionBackend, AscendGDNFusedAttentionBackend, AscendGDNHostMetadataBackend)
                 if recurrent
@@ -621,8 +624,12 @@ class NPUModelRunner(GPUModelRunner):
                 if name in draft_layers or name not in layers:
                     continue
                 layer = layers[name]
-                if layer.get_attn_backend() not in allowed or len(layer.kv_cache) != 2:
-                    raise RuntimeError(f"Unsupported target attention or cache layout for tree verification in {name}")
+                backend = layer.get_attn_backend()
+                if backend not in allowed or len(layer.kv_cache) != 2:
+                    raise RuntimeError(
+                        f"Unsupported tree cache for {name} "
+                        f"({type(spec).__name__}, {backend.__name__}, {len(layer.kv_cache)} tensors)"
+                    )
                 for cache in layer.kv_cache:
                     caches[cache.data_ptr(), tuple(cache.shape), cache.stride()] = cache
             if caches:
