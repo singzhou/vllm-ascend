@@ -361,6 +361,18 @@ class ModelWithContext(nn.Module):
     def compute_confidence(self, head_hidden: torch.Tensor, markov_embed: torch.Tensor):
         return self.original_model.compute_confidence(head_hidden, markov_embed)
 
+    def __getattr__(self, name: str):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            # Draft helpers such as DFlash2 candidate scoring run outside
+            # forward and still access the wrapped model during capture.
+            registered_modules = self.__dict__.get("_modules", {})
+            original_model = self.__dict__.get("original_model", registered_modules.get("original_model"))
+            if original_model is None:
+                raise
+            return getattr(original_model, name)
+
 
 @contextmanager
 def model_capture_wrapper(speculator, is_draft_model_prefill):

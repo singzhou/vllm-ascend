@@ -35,6 +35,50 @@ from vllm_ascend.utils import AscendDeviceType
 LARGE_HEAD_PREFILL_PATH = "vllm_ascend.device.utils.npu_large_head_prefill_attention"
 
 
+@pytest.mark.parametrize("window", [None, 1, 128, 4096])
+@pytest.mark.parametrize("causal", [False, True])
+def test_fia_sliding_window_mask_params(window, causal):
+    impl = AscendAttentionBackendImpl.__new__(AscendAttentionBackendImpl)
+    impl.sliding_window = window
+    device = torch.device("cpu")
+    mask = torch.ones((2048, 2048), dtype=torch.int8).triu(diagonal=1)
+    metadata = AscendMetadata(causal=causal, attn_mask=mask if causal else None)
+    with patch.object(attn_module, "AttentionMaskBuilder") as mask_builder:
+        mask_builder.return_value.get_splitfuse_attn_mask.return_value = mask
+        actual_mask, sparse_mode, pre_tokens, next_tokens = impl._get_fia_mask_params(metadata, device)
+    if window is None:
+        assert actual_mask is metadata.attn_mask
+        assert (sparse_mode, pre_tokens, next_tokens) == (
+            3 if causal else 0,
+            attn_module.SWA_INT_MAX,
+            attn_module.SWA_INT_MAX,
+        )
+    else:
+        assert actual_mask is mask
+        assert (sparse_mode, pre_tokens, next_tokens) == (4, window - 1, 0 if causal else window - 1)
+    if not causal and window is not None:
+        mask_builder.assert_called_once_with(device)
+    else:
+        mask_builder.assert_not_called()
+
+
+@pytest.mark.parametrize("window", [0, -1])
+def test_fia_rejects_nonpositive_sliding_window(window):
+    with pytest.raises(ValueError, match="sliding_window must be positive"):
+        AscendAttentionBackendImpl(
+            num_heads=2,
+            head_size=128,
+            scale=1.0,
+            num_kv_heads=1,
+            alibi_slopes=None,
+            sliding_window=window,
+            kv_cache_dtype="auto",
+            logits_soft_cap=None,
+            attn_type="decoder",
+            kv_sharing_target_layer_name=None,
+        )
+
+
 class TestAttentionGraphHelpers(TestBase):
     @patch("vllm_ascend.attention.utils.using_paged_attention", return_value=True)
     def test_pa_contiguous_cache_requirement_is_limited_to_normal_impl(self, mock_using_pa):

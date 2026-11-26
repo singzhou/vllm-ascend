@@ -111,14 +111,15 @@ def test_pa_params_preserve_cache_storage_and_stride(use_bnsd, state):
         torch.testing.assert_close(actual.reshape(original.shape), original)
 
 
-@pytest.mark.parametrize("branch", ["causal", "non_causal", "sliding_window"])
+@pytest.mark.parametrize("branch", ["causal", "non_causal", "sliding_window", "non_causal_window"])
 @pytest.mark.parametrize("contiguous", [False, True])
 @pytest.mark.parametrize("cross_attention", [False, True])
 def test_forward_non_pa_branches_receive_contiguous_kv(branch, contiguous, cross_attention):
     impl = _make_impl()
     metadata = _make_metadata()
-    metadata.causal = branch != "non_causal"
-    impl.sliding_window = 16 if branch == "sliding_window" else None
+    metadata.causal = branch in ("causal", "sliding_window")
+    impl.sliding_window = 16 if branch in ("sliding_window", "non_causal_window") else None
+    window_mask = torch.ones(2, 2, dtype=torch.int8)
     if cross_attention:
         impl.attn_type = AttentionType.ENCODER_DECODER
         metadata.seq_lens = torch.tensor([5], dtype=torch.int32)
@@ -133,15 +134,24 @@ def test_forward_non_pa_branches_receive_contiguous_kv(branch, contiguous, cross
         patch.object(attn_module, "_EXTRA_CTX", SimpleNamespace(capturing=False)),
         patch.object(attn_module.envs_vllm, "VLLM_BATCH_INVARIANT", False),
         patch.object(attn_module, "get_current_hardware_profile", return_value=Mock(supports=lambda _: False)),
+        patch.object(attn_module, "AttentionMaskBuilder") as mask_builder,
         patch.object(attn_module.torch_npu, "npu_fused_infer_attention_score", create=True) as direct_fia,
         patch.object(attn_module.DeviceOperator, "npu_fused_infer_attention_score") as device_fia,
     ):
         selected_fia = device_fia if branch == "causal" else direct_fia
+        mask_builder.return_value.get_splitfuse_attn_mask.return_value = window_mask
         selected_fia.return_value = (torch.ones_like(query), None)
         result = impl.forward_fused_infer_attention(query, key, value, metadata, output)
 
     selected_fia.assert_called_once()
     kwargs = selected_fia.call_args.kwargs
+    if branch == "non_causal_window":
+        assert kwargs["atten_mask"] is window_mask
+        assert kwargs["sparse_mode"] == 4
+        assert kwargs["pre_tokens"] == kwargs["next_tokens"] == 15
+    elif branch == "non_causal":
+        assert kwargs["sparse_mode"] == 0
+        assert "atten_mask" not in kwargs
     assert kwargs["block_table"] is None
     assert kwargs["actual_seq_lengths_kv"] == ([5] if cross_attention else [3])
     for name, original in (("key", key), ("value", value)):
@@ -152,11 +162,15 @@ def test_forward_non_pa_branches_receive_contiguous_kv(branch, contiguous, cross
     torch.testing.assert_close(output, torch.ones_like(query))
 
 
-@pytest.mark.parametrize("v2", [False, True])
+@pytest.mark.parametrize("v2,window", [(False, None), (False, 16), (True, None)])
 @pytest.mark.parametrize("use_pa", [False, True])
-def test_graph_workspace_and_task_preserve_fia_layout_contract(v2, use_pa):
+def test_graph_workspace_and_task_preserve_fia_layout_contract(v2, window, use_pa):
     impl = _make_impl()
     metadata = _make_metadata(AscendAttentionState.DecodeOnly if use_pa else AscendAttentionState.PrefillNoCache)
+    window_mask = torch.ones(2, 2, dtype=torch.int8)
+    if window is not None:
+        impl.sliding_window = window
+        metadata.causal = False
     query = torch.zeros(3, 2, 4)
     key, value = _strided_kv(), _strided_kv()
     if use_pa:
@@ -170,12 +184,14 @@ def test_graph_workspace_and_task_preserve_fia_layout_contract(v2, use_pa):
     )
     op_name = "npu_fused_infer_attention_score_v2" if v2 else "npu_fused_infer_attention_score"
     with (
-        patch.object(attn_module, "_EXTRA_CTX", SimpleNamespace(is_draft_model=False)),
+        patch.object(attn_module, "_EXTRA_CTX", SimpleNamespace(is_draft_model=window is not None)),
+        patch.object(attn_module, "AttentionMaskBuilder") as mask_builder,
         patch.object(attn_module.torch_npu, op_name, create=True),
         patch.object(attn_module.torch_npu, workspace_name, create=True) as get_workspace,
         patch.object(attn_module, "get_capture_resource", side_effect=lambda _, factory, *args: factory()),
         patch.object(attn_module, "register_task") as register,
     ):
+        mask_builder.return_value.get_splitfuse_attn_mask.return_value = window_mask
         graph_fia = impl.full_graph_fia_v2 if v2 else impl.full_graph_fia
         result, num_tokens = graph_fia(query, key, value, metadata, output)
 
@@ -187,6 +203,10 @@ def test_graph_workspace_and_task_preserve_fia_layout_contract(v2, use_pa):
     expected_value = impl.value_cache.view(2, 3, 4) if use_pa else value
     for kwargs in (workspace_kwargs, task_kwargs):
         assert kwargs["block_table"] is (metadata.block_tables if use_pa else None)
+        if window is not None:
+            assert kwargs["atten_mask"] is window_mask
+            assert kwargs["sparse_mode"] == 4
+            assert kwargs["pre_tokens"] == kwargs["next_tokens"] == window - 1
         for name, original in (("key", expected_key), ("value", expected_value)):
             assert kwargs[name].is_contiguous() == (not use_pa)
             torch.testing.assert_close(kwargs[name], original)

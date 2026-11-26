@@ -20,6 +20,8 @@ from vllm.model_executor.models.qwen3_dflash import (
 )
 from vllm.model_executor.models.utils import maybe_prefix
 
+from vllm_ascend.attention.attention_v1 import AscendAttentionBackendImpl
+from vllm_ascend.attention.fa4_v1 import AscendFA4WindowBackend
 from vllm_ascend.models.qwen3_dspark import align_draft_weights
 from vllm_ascend.utils import get_rotation_path
 
@@ -118,6 +120,24 @@ class DFlash2Qwen3DecoderLayer(DFlashQwen3DecoderLayer):
             quant_config=quant_config,
             prefix=prefix,
         )
+        if self.self_attn.sliding_window is not None:
+            if not vllm_config.use_v2_model_runner:
+                raise NotImplementedError("DFlash2 with native sliding window requires the V2 model runner.")
+            if not self.self_attn.causal:
+                attention = self.self_attn.attn
+                impl = attention.impl
+                standard_fia = (
+                    type(impl) is AscendAttentionBackendImpl
+                    and not impl.pcp_enabled
+                    and impl.sinks is None
+                    and impl.kv_cache_dtype in (torch.float16, torch.bfloat16)
+                )
+                if not (standard_fia or attention.get_attn_backend() is AscendFA4WindowBackend):
+                    raise NotImplementedError(
+                        "Non-causal DFlash2 sliding window requires ordinary FIA without sinks, "
+                        "context parallelism or KV quantization, or a compatible FA4 backend."
+                    )
+
         draft_config = config.dflash_config
         speculative_config = vllm_config.speculative_config
         assert speculative_config is not None

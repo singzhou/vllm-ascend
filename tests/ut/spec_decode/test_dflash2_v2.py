@@ -19,13 +19,23 @@
 
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from vllm.compilation.backends import set_model_tag
+from vllm.config import AttentionConfig
 from vllm.config.compilation import CUDAGraphMode
+from vllm.v1.attention import selector as attention_selector
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
+from vllm.v1.attention.selector import AttentionSelectorConfig
+from vllm.v1.kv_cache_interface import KVCacheSpecKind
 from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 
+from vllm_ascend.attention.attention_v1 import AscendAttentionBackend
+from vllm_ascend.attention.fa4_v1 import AscendFA4WindowBackend
+from vllm_ascend.compilation.acl_graph import ACLGraphWrapper
+from vllm_ascend.worker.v2.aclgraph_utils import model_capture_wrapper
 from vllm_ascend.worker.v2.spec_decode import init_speculator
 from vllm_ascend.worker.v2.spec_decode.dflash.speculator import AscendDFlashSpeculator
 from vllm_ascend.worker.v2.spec_decode.dflash2.speculator import (
@@ -70,6 +80,79 @@ def test_patch_swaps_upstream_selector_walk_kernel():
     assert upstream._selector_walk_kernel is _selector_walk_kernel_ascend
 
 
+@pytest.mark.parametrize("non_causal", [False, True])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "draft_fa4",
+        "target_fa4",
+        "no_spec",
+        "serial",
+        "dflash1",
+        "disabled",
+        "v1",
+        "backend",
+        "layout",
+        "sink",
+        "dcp",
+        "dtype",
+        "hardware",
+        "non-window",
+    ],
+)
+def test_dflash2_window_routing_is_scoped_outside_selector_cache(monkeypatch, non_causal, scenario):
+    from vllm_ascend.patch.worker.patch_v2 import patch_dflash_speculator as dflash_patch
+
+    target_fa4 = scenario == "target_fa4"
+    monkeypatch.setenv("VLLM_ASCEND_FA4_TARGET_ATTN", "1" if target_fa4 else "0")
+    monkeypatch.setenv("VLLM_ASCEND_ENABLE_DSPARK_FIA_SINK", "0" if target_fa4 or scenario == "disabled" else "2")
+    monkeypatch.setattr(dflash_patch.envs_vllm, "VLLM_KV_CACHE_LAYOUT", "HND" if scenario == "layout" else "NHD")
+    monkeypatch.setattr(
+        dflash_patch, "get_current_hardware_profile", lambda: SimpleNamespace(supports=lambda _: scenario != "hardware")
+    )
+    arch = "DFlashDraftModel" if scenario == "dflash1" else "DFlash2DraftModel"
+    spec = SimpleNamespace(
+        attention_backend=AttentionBackendEnum.FLASH_ATTN if scenario == "backend" else None,
+        parallel_drafting=scenario != "serial",
+        draft_model_config=SimpleNamespace(architectures=[arch]),
+    )
+    config = SimpleNamespace(
+        use_v2_model_runner=scenario != "v1",
+        speculative_config=None if scenario == "no_spec" else spec,
+        attention_config=AttentionConfig(
+            backend_per_kind={KVCacheSpecKind.FULL_ATTENTION.value: AttentionBackendEnum.CUSTOM} if target_fa4 else {},
+        ),
+    )
+    monkeypatch.setattr(dflash_patch, "get_current_vllm_config", lambda: config)
+    selector = AttentionSelectorConfig(
+        head_size=128,
+        dtype=torch.float32 if scenario == "dtype" else torch.bfloat16,
+        kv_cache_dtype="auto",
+        block_size=None,
+        has_sliding_window=scenario != "non-window",
+        use_non_causal=non_causal,
+        has_sink=scenario == "sink",
+        use_dcp=scenario == "dcp",
+    )
+    backend = AttentionBackendEnum.CUSTOM
+    original = dflash_patch._original_cached_get_attn_backend
+    expected = AscendFA4WindowBackend if scenario in ("draft_fa4", "target_fa4") else AscendAttentionBackend
+    try:
+        with patch("vllm.platforms.current_platform.get_attn_backend_cls") as resolve:
+            resolve.return_value = "vllm_ascend.attention.attention_v1.AscendAttentionBackend"
+            for target_first in (True, False):
+                original.cache_clear()
+                resolve.reset_mock()
+                if target_first:
+                    assert attention_selector._cached_get_attn_backend(backend, selector) is AscendAttentionBackend
+                with set_model_tag("dflash_head"):
+                    assert attention_selector._cached_get_attn_backend(backend, selector) is expected
+                assert attention_selector._cached_get_attn_backend(backend, selector) is AscendAttentionBackend
+                resolve.assert_called_once()
+    finally:
+        original.cache_clear()
+
+
 def _spec_config(arch: str) -> SimpleNamespace:
     return SimpleNamespace(
         method="dflash",
@@ -95,25 +178,88 @@ def test_init_speculator_routes_dflash2_draft_model():
         d2.assert_not_called()
 
 
-def test_init_cudagraph_manager_requires_enforce_eager(monkeypatch):
+@pytest.mark.parametrize(
+    ("enforce_eager", "expected_mode"),
+    [(False, CUDAGraphMode.FULL_DECODE_ONLY), (None, CUDAGraphMode.FULL_DECODE_ONLY), (True, CUDAGraphMode.NONE)],
+)
+def test_init_cudagraph_manager_preserves_graph_mode(monkeypatch, enforce_eager, expected_mode):
     calls: list[CUDAGraphMode] = []
-    monkeypatch.setattr(
-        "vllm_ascend.worker.v2.spec_decode.dflash.speculator.AscendDFlashSpeculator.init_cudagraph_manager",
-        lambda self, mode: calls.append(mode),
-    )
     speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.speculative_config = SimpleNamespace(enforce_eager=enforce_eager)
+    speculator.update_stream = object()
 
-    # Eager drafting forces the draft aclgraph manager to NONE.
-    speculator.speculative_config = SimpleNamespace(enforce_eager=True)
+    def initialize_parent(self, mode):
+        calls.append(mode)
+        self.query_cudagraph_manager = SimpleNamespace()
+
+    monkeypatch.setattr(DFlashSpeculator, "init_cudagraph_manager", initialize_parent)
     speculator.init_cudagraph_manager(CUDAGraphMode.FULL_DECODE_ONLY)
-    assert calls == [CUDAGraphMode.NONE]
 
-    # Graph mode is rejected until the Ascend walk kernel is capturable, and
-    # must fail before delegating to the parent manager.
-    speculator.speculative_config = SimpleNamespace(enforce_eager=False)
-    with pytest.raises(NotImplementedError, match="graph mode"):
-        speculator.init_cudagraph_manager(CUDAGraphMode.FULL_DECODE_ONLY)
-    assert calls == [CUDAGraphMode.NONE]
+    assert calls == [expected_mode]
+    assert speculator.query_cudagraph_manager.speculator is speculator
+    assert speculator.query_cudagraph_manager.update_stream is speculator.update_stream
+
+
+def test_graph_replay_pads_fia_lengths_and_keeps_fa4_device_lengths():
+    speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.num_query_per_req = 8
+    speculator.input_batch = SimpleNamespace(num_reqs=2)
+    fia = SimpleNamespace(seq_lens_list=[321, 46, 0, 0])
+    fa4 = SimpleNamespace(seq_lens_list=None, seq_lens=torch.tensor([321, 46, 0, 0]))
+
+    speculator._update_draft_attn_metadata({"fia": fia, "fa4": fa4}, num_reqs_padded=4)
+
+    assert fia.actual_seq_lengths_q == [8, 16, 24, 32]
+    assert fia.seq_lens_list == [321, 46, 8, 8]
+    assert fa4.seq_lens_list is None
+    assert fa4.seq_lens.tolist() == [321, 46, 0, 0]
+
+
+def test_dflash2_capture_runs_candidate_selection_through_model_wrapper(monkeypatch):
+    speculator = AscendDFlash2Speculator.__new__(AscendDFlash2Speculator)
+    speculator.num_query_per_req = 3
+    speculator.num_speculative_steps = 2
+    speculator.selector_top_k = 2
+    speculator.enable_adaptive_verification = False
+    speculator.sample_indices = torch.tensor([1, 2])
+    speculator._anchor_indices = torch.tensor([0])
+    speculator.input_buffers = SimpleNamespace(input_ids=torch.tensor([42, 0, 0]))
+    speculator.draft_logits = torch.empty(1, 2, 8)
+    speculator._run_model = Mock(return_value=torch.zeros(3, 4))
+    speculator._sample_path = Mock()
+    speculator._cache_draft_logits = Mock()
+
+    model = torch.nn.Module()
+    model.model = torch.nn.Module()
+    candidates = torch.tensor([[1, 2], [3, 4]])
+    model.compute_candidates = Mock(return_value=(candidates, torch.zeros(2, 2)))
+    scores = torch.ones(1, 2, 2, 2)
+    candidate_selector = Mock(return_value=scores)
+    monkeypatch.setattr("vllm_ascend.compilation.acl_graph.current_platform.get_global_graph_pool", lambda: object())
+    monkeypatch.setattr("vllm_ascend.compilation.acl_graph.is_forward_context_available", lambda: False)
+    monkeypatch.setattr(
+        "vllm_ascend.compilation.acl_graph.get_ascend_config",
+        lambda: SimpleNamespace(ascend_compilation_config=SimpleNamespace(enable_super_kernel=False)),
+    )
+    model.model.candidate_selector = ACLGraphWrapper(
+        runnable=candidate_selector,
+        vllm_config=SimpleNamespace(compilation_config=SimpleNamespace()),
+        runtime_mode=CUDAGraphMode.PIECEWISE,
+    )
+    speculator.model = model
+
+    with model_capture_wrapper(speculator, is_draft_model_prefill=False):
+        speculator._generate_draft(1, 3, None, None, None)
+
+    assert speculator.model is model
+    model.compute_candidates.assert_called_once()
+    candidate_selector.assert_called_once()
+    assert not model.model.candidate_selector.concrete_aclgraph_entries
+    selector_candidates, _, _, anchor = candidate_selector.call_args.args
+    torch.testing.assert_close(selector_candidates, candidates.unsqueeze(0))
+    torch.testing.assert_close(anchor, torch.tensor([42]))
+    assert speculator._sample_path.call_args.args[1] is scores
+    speculator._cache_draft_logits.assert_called_once()
 
 
 def test_greedy_walk_contract_reference():

@@ -32,6 +32,7 @@ from vllm_ascend.attention.fa4_v1 import (
     AscendFA4Impl,
     AscendFA4MetadataBuilder,
     AscendFA4TargetMetadataBuilder,
+    AscendFA4WindowMetadataBuilder,
 )
 
 
@@ -41,6 +42,7 @@ def test_paged_forward_and_metadata_sharing(head_size):
     impl.num_heads, impl.num_kv_heads, impl.head_size = 4, 2, head_size
     impl.scale = 0.17
     impl.use_bnsd_kv_cache = False
+    impl.sliding_window = None
     impl.key_cache = impl.value_cache = None
     kv_cache = torch.randn(2, 16, 16, 2, head_size)
     query = torch.randn(10, 8, head_size)[:, :4]
@@ -121,14 +123,15 @@ def test_causal_forward_uses_base_backend():
 
 
 @pytest.mark.parametrize("causal", [True, False])
-def test_builder_lengths_and_causal_fallback(causal):
-    builder = AscendFA4MetadataBuilder.__new__(AscendFA4MetadataBuilder)
+@pytest.mark.parametrize("builder_cls", [AscendFA4MetadataBuilder, AscendFA4WindowMetadataBuilder])
+def test_builder_lengths_and_causal_fallback(causal, builder_cls):
+    builder = builder_cls.__new__(builder_cls)
     common = SimpleNamespace(causal=causal, query_start_loc=torch.tensor([0, 4, 8]))
     lengths = torch.tensor([19, 23])
     table = torch.zeros(2, 4, dtype=torch.int32)
     with patch.object(AscendAttentionMetadataBuilder, "_build_fia_seq_inputs", return_value="ordinary") as base:
         result = builder._build_fia_seq_inputs(common, 2, common.query_start_loc, lengths, table)
-        if causal:
+        if causal and builder_cls is AscendFA4MetadataBuilder:
             assert result == "ordinary"
             base.assert_called_once()
         else:
@@ -262,6 +265,7 @@ def test_invalid_cache_inputs(failure):
     impl = AscendFA4Impl.__new__(AscendFA4Impl)
     impl.key_cache = impl.value_cache = None if failure == "missing_cache" else torch.empty(2, 16, 2, 256)
     impl.use_bnsd_kv_cache = failure == "layout"
+    impl.sliding_window = None
     metadata = SimpleNamespace(
         causal=False, num_actual_tokens=8, seq_lens=torch.ones(2), block_tables=torch.zeros(1, 4)
     )

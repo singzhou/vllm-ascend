@@ -15,7 +15,6 @@
 # This file is a part of the vllm-ascend project.
 #
 
-from vllm.config.compilation import CUDAGraphMode
 from vllm.triton_utils import tl, triton
 from vllm.v1.worker.gpu.sample.gumbel import tl_rand32
 from vllm.v1.worker.gpu.spec_decode.dflash2.speculator import DFlash2Speculator
@@ -107,7 +106,7 @@ def _selector_walk_kernel_ascend(
 class AscendDFlash2Speculator(DFlash2Speculator, AscendDFlashSpeculator):
     """DFlash2 speculative drafter on Ascend NPUs.
 
-    Every Ascend-specific behavior is inherited from AscendDFlashSpeculator:
+    The attention and graph plumbing comes from AscendDFlashSpeculator:
     the NPU attention-metadata building (build_draft_attn_metadatas), the
     aclgraph manager wiring (init_cudagraph_manager), KV-cache/slot bookkeeping
     (set_attn), and the propose wrapper. Placing DFlash2Speculator first in
@@ -115,29 +114,11 @@ class AscendDFlash2Speculator(DFlash2Speculator, AscendDFlashSpeculator):
     full-vocab draft logits) and its ``_generate_draft`` override win: the
     candidate top-k, selector scoring, sequential path walk, and draft-logits
     scatter run instead of plain DFlash drafting -- including inside the
-    aclgraph capture, which captures ``self._generate_draft``.
+    aclgraph capture, which captures ``self._generate_draft``. The selector
+    runs after the model forward closes its context, so its internal graph
+    wrapper delegates directly while the outer graph records its operations.
     """
 
     # _generate_draft -> get_top_k_tokens samples on the vocab-sharded head
     # outside sample_draft; reject lmhead TP at construction (as DSpark).
     _lmhead_tp_sample_draft_supported = False
-
-    def init_cudagraph_manager(self, cudagraph_mode: CUDAGraphMode) -> None:
-        # V2 passes the runner's cudagraph mode to the draft speculator
-        # without consulting the spec-level enforce_eager. Honor it here:
-        # with enforce_eager the draft runs eagerly while the target keeps
-        # its own cudagraph mode (e.g. FULL_DECODE_ONLY). This also works
-        # around a dynamo fullgraph capture failure in the draft's RoPE
-        # (fake-tensor shape mismatch on the NPU meta kernels).
-        if self.speculative_config.enforce_eager:
-            cudagraph_mode = CUDAGraphMode.NONE
-        else:
-            raise NotImplementedError(
-                "dflash2 does not currently support graph mode; "
-                "please enable enforce_eager. This is because the "
-                "_selector_walk_kernel_ascend operator must be reimplemented "
-                "due to NPU hardware constraints and cannot reuse the upstream "
-                "vLLM implementation. Graph mode will be supported in a future "
-                "release."
-            )
-        super().init_cudagraph_manager(cudagraph_mode)

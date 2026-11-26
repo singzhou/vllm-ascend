@@ -39,7 +39,9 @@ def functions_from_source(relative, names, namespace, base=None):
 @pytest.fixture
 def cache_functions():
     namespace = functions_from_source(
-        "vllm_ascend/attention/fa4_v1.py", {"_fa4_cache_views", "_build_fa4_seq_tensors"}, dict(torch=torch)
+        "vllm_ascend/attention/fa4_v1.py",
+        {"_fa4_cache_views", "_build_fa4_seq_tensors"},
+        dict(torch=torch, _FA4_PAGE_TABLE_CACHE_ATTR="_ascend_fa4_page_table_cache"),
     )
     return functions_from_source(
         "vllm_ascend/worker/v2/attn_utils.py",
@@ -139,6 +141,7 @@ def test_forward_passes_virtual_pages_to_fa4(cache_functions):
     impl.num_heads, impl.num_kv_heads, impl.head_size = 4, 2, 128
     impl.scale = 0.125
     impl.use_bnsd_kv_cache = False
+    impl.sliding_window = None
     backing = torch.randn(4, 2, 128, 2, 128)
     impl.key_cache, impl.value_cache = backing[:, 0], backing[:, 1]
     original_key = impl.key_cache
@@ -181,6 +184,7 @@ def test_causal_fa4_keeps_ragged_offsets_and_exact_device_lengths(cache_function
     impl.num_heads, impl.num_kv_heads, impl.head_size = 4, 2, 256
     impl.scale = impl.head_size**-0.5
     impl.use_bnsd_kv_cache = False
+    impl.sliding_window = None
     impl.key_cache = torch.empty(4, 128, 2, 256) if paged else None
     impl.value_cache = torch.empty_like(impl.key_cache) if paged else None
     offsets = torch.tensor([0, 2, 5, 5], dtype=torch.int32)
@@ -212,6 +216,60 @@ def test_causal_fa4_keeps_ragged_offsets_and_exact_device_lengths(cache_function
         assert call.kwargs["max_seqlen_k"] == (256 if paged else 4)
     assert torch.all(output[:5] == 1)
     assert torch.all(output[5:] == 0)
+
+
+@pytest.mark.parametrize("causal,expected", [(True, (64, 0)), (False, (64, 64))])
+def test_draft_window_is_shared_by_scheduler_and_kernel(cache_functions, causal, expected):
+    fa4 = MagicMock()
+    context = SimpleNamespace()
+    namespace = functions_from_source(
+        "vllm_ascend/attention/fa4_v1.py",
+        {"forward_fused_infer_attention"},
+        dict(
+            cache_functions,
+            AscendMetadata=object,
+            _load_fa4=lambda: fa4,
+            get_forward_context=lambda: context,
+            _FA4_META_CACHE_ATTR="_ascend_fa4_meta_cache",
+            _EXTRA_CTX=SimpleNamespace(capturing=False),
+        ),
+        object,
+    )
+    impl = namespace["Probe"]()
+    impl.supports_causal_fa4 = True
+    impl.num_heads, impl.num_kv_heads, impl.head_size = 4, 2, 128
+    impl.scale = 0.125
+    impl.use_bnsd_kv_cache = False
+    impl.sliding_window = 65
+    backing = torch.empty(6, 2, 128, 2, 128)
+    impl.key_cache, impl.value_cache = backing[:, 0], backing[:, 1]
+    lengths = torch.tensor([260, 189], dtype=torch.int32)
+    metadata = SimpleNamespace(
+        causal=causal,
+        num_actual_tokens=8,
+        max_query_len=4,
+        query_start_loc=torch.tensor([0, 4, 8], dtype=torch.int32),
+        seq_lens=lengths,
+        block_tables=torch.tensor([[0, 0, 3], [0, 4, 0]], dtype=torch.int32),
+    )
+    query = torch.empty(8, 4, 128)
+    fa4.flash_attn_varlen_func.return_value = torch.zeros_like(query)
+    for _ in range(2):
+        impl.forward_fused_infer_attention(query, None, None, metadata, torch.empty_like(query))
+    fa4.get_scheduler_metadata.assert_called_once()
+    scheduler_args = fa4.get_scheduler_metadata.call_args.kwargs
+    kernel_args = fa4.flash_attn_varlen_func.call_args.kwargs
+    assert (scheduler_args["window_size_left"], scheduler_args["window_size_right"]) == expected
+    assert kernel_args["window_size"] == expected
+    assert kernel_args["causal"] is scheduler_args["causal"] is causal
+    torch.testing.assert_close(kernel_args["seqused_k"], lengths)
+    torch.testing.assert_close(kernel_args["page_table"], metadata.block_tables * 2)
+
+    # Windowed layers can share device lengths while requiring different tiling.
+    impl.sliding_window = 129
+    impl.forward_fused_infer_attention(query, None, None, metadata, torch.empty_like(query))
+    assert fa4.get_scheduler_metadata.call_count == 2
+    assert fa4.get_scheduler_metadata.call_args.kwargs["window_size_left"] == 128
 
 
 @pytest.mark.parametrize("seq_len", [31, 32, 33, 127, 128, 129])

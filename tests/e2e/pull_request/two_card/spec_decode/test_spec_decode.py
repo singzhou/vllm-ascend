@@ -27,7 +27,7 @@ import os
 import pytest
 from transformers import AutoTokenizer
 from vllm import SamplingParams
-from vllm.config import CompilationConfig
+from vllm.config import CompilationConfig, CompilationMode
 from vllm.tokenizers.registry import resolve_tokenizer_args
 from vllm.v1.metrics.reader import Counter, Vector
 
@@ -344,11 +344,14 @@ def test_dflash2_acceptance(
 
 @pytest.mark.parametrize("method", DFLASH2_MODELS.keys())
 @pytest.mark.parametrize("num_speculative_tokens", [7])
+@pytest.mark.parametrize("enforce_eager", [True, False], ids=["eager", "aclgraph"])
 def test_dflash2_v2_acceptance(
     method: str,
     num_speculative_tokens: int,
+    enforce_eager: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "1"
+    monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "1")
     main_model_name = DFLASH2_MODELS[method]["main"]
     spec_model_name = DFLASH2_MODELS[method]["spec"]
 
@@ -382,8 +385,17 @@ def test_dflash2_v2_acceptance(
         "method": "dflash",
         "model": spec_model_name,
         "num_speculative_tokens": num_speculative_tokens,
-        "enforce_eager": True,
+        "enforce_eager": enforce_eager,
     }
+    compilation_config = (
+        None
+        if enforce_eager
+        else CompilationConfig(
+            mode=CompilationMode.VLLM_COMPILE,
+            cudagraph_mode="FULL_DECODE_ONLY",
+            cudagraph_capture_sizes=[num_speculative_tokens + 1],
+        )
+    )
 
     with VllmRunner(
         main_model_name,
@@ -394,9 +406,14 @@ def test_dflash2_v2_acceptance(
         distributed_executor_backend="mp",
         gpu_memory_utilization=0.9,
         speculative_config=speculative_config,
-        enforce_eager=True,
+        enforce_eager=enforce_eager,
+        compilation_config=compilation_config,
+        additional_config={"ascend_compilation_config": {"enable_npugraph_ex": False}},
         enable_prefix_caching=False,
     ) as llm:
+        config = llm.model.llm_engine.vllm_config
+        assert config.use_v2_model_runner
+        assert config.compilation_config.cudagraph_mode.has_full_cudagraphs() is (not enforce_eager)
         outputs = llm.model.generate(prompts, sampling_params)
         metrics = llm.model.get_metrics()
 

@@ -65,10 +65,9 @@ class AscendDFlashSpeculator(LmheadTPDraftSamplingMixin, DFlashSpeculator):
         return [attn_metadata]
 
     def _update_draft_attn_metadata(self, attn_metadata, num_reqs_padded):
-        """Rebuild ``actual_seq_lengths_q`` from the padded request count,
-        mirroring Eagle's ``_update_decode_attn_metadata``.
+        """Match host-side FIA lengths to the padded uniform graph batch.
 
-        Upstream ``Speculator._build_draft_attn_metadata`` clamps
+        Upstream ``Speculator._build_attn_metadata`` clamps
         ``query_start_loc`` at the real ``num_reqs`` to keep the cumulative
         series non-decreasing, so when a batch is padded to a capture size
         (``num_reqs_padded > num_reqs``) the cumulative query lengths stop at
@@ -79,8 +78,15 @@ class AscendDFlashSpeculator(LmheadTPDraftSamplingMixin, DFlashSpeculator):
         ``queryT != last element of actualSequenceLengthQ``.
         """
         query_lens_list = [(i + 1) * self.num_query_per_req for i in range(num_reqs_padded)]
+        num_reqs = self.input_batch.num_reqs
+        padded_kv_lens = [self.num_query_per_req] * (num_reqs_padded - num_reqs)
         for metadata in attn_metadata.values():
             metadata.actual_seq_lengths_q = query_lens_list
+            seq_lens_list = getattr(metadata, "seq_lens_list", None)
+            if padded_kv_lens and seq_lens_list is not None:
+                # Band-mode FIA needs a valid KV range for every padded query
+                # block. The dummy slots never write KV or yield sampled tokens.
+                seq_lens_list[num_reqs:] = padded_kv_lens
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         super().__init__(vllm_config, device)
