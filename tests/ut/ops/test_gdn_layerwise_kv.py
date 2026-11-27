@@ -16,6 +16,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 from torch import nn
 from vllm.forward_context import ForwardContext, override_forward_context
@@ -34,6 +35,7 @@ from vllm_ascend.ops.gdn_attn_builder import (
     GDNPrefillMetadata,
     _build_non_spec_chunked_prefill_metadata,
 )
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata
 
 
 class _Linear(nn.Module):
@@ -74,6 +76,7 @@ class _GDNForwardWrapper(nn.Module):
         _pack_conv_weights(self.conv1d)
         self.num_k_heads = 1
         self.num_v_heads = 1
+        self.num_spec = 0
         self.tp_size = 1
         self.head_k_dim = 2
         self.head_v_dim = 2
@@ -227,6 +230,51 @@ def test_fla_prefill_uses_host_metadata_with_strided_ssm_cache():
     triton_fallback.assert_not_called()
     torch.testing.assert_close(model.ssm_state[0], torch.zeros_like(model.ssm_state[0]))
     torch.testing.assert_close(model.ssm_state[1], torch.full_like(model.ssm_state[1], 3))
+
+
+@pytest.mark.parametrize("kernel_fault", [False, True])
+def test_mega_dispatch_never_probes_or_retries_native(kernel_fault):
+    model = _GDNForwardWrapper()
+    metadata = _make_prefill_metadata()
+    metadata.non_spec_prefill_metadata.chunk = XllmMegaGdnMetadata(metadata.prefill_query_start_loc, 1, 2)
+    forward_context = ForwardContext(
+        no_compile_layers={model.prefix: model},
+        attn_metadata={model.prefix: metadata},
+        slot_mapping={},
+    )
+    qkv = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+    output = torch.empty(2, 1, 2)
+    gates = torch.zeros(1, 2, 1), torch.ones(1, 2, 1)
+    mega = Mock(return_value=(qkv.reshape_as(output).unsqueeze(0), model.ssm_state))
+    if kernel_fault:
+        mega.side_effect = RuntimeError("kernel fault")
+    with (
+        override_forward_context(forward_context),
+        patch("vllm_ascend.ops.gdn.get_pcp_group", return_value=SimpleNamespace(world_size=1)),
+        patch("vllm_ascend.ops.gdn._get_fla_gdn_prefill_op") as native_probe,
+        patch("vllm_ascend.ops.gdn.DeviceOperator.fused_gdn_gating", return_value=gates),
+        patch("vllm_ascend.ops.gdn.DeviceOperator.fla_gdn_prefill") as native,
+        patch("vllm_ascend.ops.gdn.chunk_gated_delta_rule") as triton,
+        patch.object(XllmMegaGdnMetadata, "supports", return_value=True),
+        patch("vllm_ascend.ops.gdn.get_xllm_mega_gdn_prefill", return_value=mega),
+        patch("vllm_ascend.ops.gdn.gather_ssm_states", return_value=model.ssm_state),
+        patch("vllm_ascend.ops.gdn.scatter_ssm_states_") as scatter,
+        patch("vllm_ascend.ops.gdn.causal_conv1d_fn", side_effect=lambda x, *a, **k: x.clone()),
+        patch("vllm_ascend.ops.gdn.wait_for_kv_layer_from_connector"),
+        patch("vllm_ascend.ops.gdn.record_attention_compute_start"),
+        patch("vllm_ascend.ops.gdn.maybe_save_kv_layer_to_connector"),
+    ):
+        if kernel_fault:
+            with pytest.raises(RuntimeError, match="kernel fault"):
+                model._forward_core(qkv, torch.zeros(2, 1), torch.zeros(2, 1), output)
+            scatter.assert_not_called()
+        else:
+            model._forward_core(qkv, torch.zeros(2, 1), torch.zeros(2, 1), output)
+            scatter.assert_called_once()
+    mega.assert_called_once()
+    native_probe.assert_not_called()
+    native.assert_not_called()
+    triton.assert_not_called()
 
 
 def test_connector_observes_updated_gdn_state_for_each_compiled_call():

@@ -34,6 +34,8 @@ from vllm.v1.attention.backends.utils import (
 )
 from vllm.v1.kv_cache_interface import AttentionSpec
 
+from vllm_ascend import envs
+from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_hardware_profile
 from vllm_ascend.ops.triton.fla.utils import (
     prepare_chunk_indices,
     prepare_chunk_offsets,
@@ -41,6 +43,7 @@ from vllm_ascend.ops.triton.fla.utils import (
     prepare_update_chunk_offsets,
 )
 from vllm_ascend.ops.triton.mamba.gdn_state_indices import fused_gdn_spec_metadata, fused_gdn_state_indices
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata
 
 _GDN_CHUNK_SIZE = 64
 # Keep this aligned with solve_tril.LARGE_BLOCK_T in ops/triton/fla/solve_tril.py.
@@ -160,7 +163,7 @@ class GDNSpecCausalConv1dMetadata:
 @dataclass
 class GDNPrefillMetadata:
     causal_conv1d: GDNCausalConv1dMetadata
-    chunk: GDNChunkedPrefillMetadata
+    chunk: GDNChunkedPrefillMetadata | XllmMegaGdnMetadata
 
 
 @dataclass
@@ -391,7 +394,7 @@ class _GDNSharedBatchPlan:
     prefill_query_start_loc: torch.Tensor | None
     chunk_indices: torch.Tensor | None
     chunk_offsets: torch.Tensor | None
-    non_spec_chunked_prefill_metadata: GDNChunkedPrefillMetadata | None
+    non_spec_chunked_prefill_metadata: GDNChunkedPrefillMetadata | XllmMegaGdnMetadata | None
     nums_dict: dict | None
     batch_ptr: torch.Tensor | None
     token_chunk_offset_ptr: torch.Tensor | None
@@ -400,6 +403,7 @@ class _GDNSharedBatchPlan:
 class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
     _cudagraph_support = AttentionCGSupport.UNIFORM_BATCH
     build_device_chunk_metadata = True
+    use_xllm_mega_prefill = False
 
     def __init__(
         self,
@@ -557,7 +561,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
     def _attach_non_spec_prefill_metadata(
         self,
         attn_metadata: GDNAttentionMetadata,
-        chunk_metadata: GDNChunkedPrefillMetadata | None,
+        chunk_metadata: GDNChunkedPrefillMetadata | XllmMegaGdnMetadata | None,
         non_spec_cache_indices: torch.Tensor | None,
     ) -> GDNAttentionMetadata:
         attn_metadata.non_spec_prefill_metadata = None
@@ -1020,7 +1024,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
         prefill_query_start_loc: torch.Tensor | None = None
         prefill_query_start_loc_cpu: torch.Tensor | None = None
         prefill_has_initial_state: torch.Tensor | None = None
-        non_spec_chunked_prefill_metadata: GDNChunkedPrefillMetadata | None = None
+        non_spec_chunked_prefill_metadata: GDNChunkedPrefillMetadata | XllmMegaGdnMetadata | None = None
         has_initial_state: torch.Tensor | None = None
         if num_prefills > 0:
             if spec_sequence_masks is None and num_decodes > 0:
@@ -1033,7 +1037,12 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                 prefill_query_start_loc_cpu = non_spec_query_start_loc_cpu
 
             assert prefill_query_start_loc_cpu is not None
-            if self._USE_COMMON_KERNEL_METADATA:
+            if self.use_xllm_mega_prefill:
+                assert prefill_query_start_loc is not None
+                non_spec_chunked_prefill_metadata = XllmMegaGdnMetadata.build(
+                    prefill_query_start_loc_cpu, prefill_query_start_loc
+                )
+            elif self._USE_COMMON_KERNEL_METADATA:
                 non_spec_chunked_prefill_metadata = _build_non_spec_chunked_prefill_metadata(
                     self,
                     prefill_query_start_loc_cpu,
@@ -1053,6 +1062,13 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                 prefill_has_initial_state = has_initial_state[num_decodes:]
             else:
                 prefill_has_initial_state = has_initial_state
+            if (
+                isinstance(non_spec_chunked_prefill_metadata, XllmMegaGdnMetadata)
+                and non_spec_chunked_prefill_metadata.active_rows is not None
+            ):
+                prefill_has_initial_state = prefill_has_initial_state.index_select(
+                    0, non_spec_chunked_prefill_metadata.active_rows
+                )
 
         return _GDNSharedBatchPlan(
             state_index_mode=state_index_mode,
@@ -1109,6 +1125,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
             ptr(num_decode_draft_tokens_cpu),
             self.num_spec,
             self.use_spec_decode,
+            self.use_xllm_mega_prefill,
         )
 
     def _get_shared_batch_plan(
@@ -1432,6 +1449,14 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                 prefill_state_indices = non_spec_state_indices_tensor[num_decodes:]
             else:
                 prefill_state_indices = non_spec_state_indices_tensor
+            if (
+                isinstance(non_spec_chunked_prefill_metadata, XllmMegaGdnMetadata)
+                and non_spec_chunked_prefill_metadata.active_rows is not None
+            ):
+                assert prefill_state_indices is not None
+                prefill_state_indices = prefill_state_indices.index_select(
+                    0, non_spec_chunked_prefill_metadata.active_rows
+                )
 
         assert not (num_decodes > 0 and num_spec_decodes > 0), (
             f"num_decodes: {num_decodes}, num_spec_decodes: {num_spec_decodes}"
@@ -1511,6 +1536,10 @@ class AscendGDNHostMetadataBuilder(AscendGDNAttentionMetadataBuilder):
     build_device_chunk_metadata = False
 
 
+class AscendGDNMegaMetadataBuilder(AscendGDNAttentionMetadataBuilder):
+    use_xllm_mega_prefill = True
+
+
 class AscendGDNHostMetadataBackend(AscendGDNAttentionBackend):
     @staticmethod
     def get_builder_cls() -> type[AscendGDNHostMetadataBuilder]:
@@ -1526,6 +1555,12 @@ class AscendGDNFusedAttentionBackend(AscendGDNAttentionBackend):
         # initialization.  The probe result is cached by the attention class.
         from vllm_ascend.ops.gdn import AscendGatedDeltaNetAttention
 
+        if envs.VLLM_ASCEND_ENABLE_XLLM_MEGA_GDN:
+            if get_pcp_group().world_size != 1 or not get_current_hardware_profile().supports(
+                HardwareCapability.XLLM_MEGA_GDN_PREFILL
+            ):
+                raise RuntimeError("xLLM MegaChunkGdn requires supported Ascend hardware and PCP size 1")
+            return AscendGDNMegaMetadataBuilder
         if get_pcp_group().world_size == 1 and AscendGatedDeltaNetAttention._supports_host_metadata_prefill():
             return AscendGDNHostMetadataBuilder
         return AscendGDNAttentionMetadataBuilder

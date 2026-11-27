@@ -26,6 +26,7 @@ from fla_npu.ops.ascendc import (
     recurrent_gated_delta_rule,
 )
 from torch import nn
+from vllm.config.compilation import CUDAGraphMode
 from vllm.distributed import get_pcp_group
 from vllm.forward_context import get_forward_context
 from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
@@ -51,6 +52,7 @@ from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_s
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
 from vllm_ascend.ops.triton.mamba.causal_conv1d import extract_last_width
 from vllm_ascend.ops.triton.mamba.state_index import gather_ssm_states, scatter_ssm_states_
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata, get_xllm_mega_gdn_prefill
 
 _PACKED_CONV_WEIGHT_NAME = "ascend_conv1d_weight"
 
@@ -812,87 +814,100 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                 g_non_spec = g_non_spec[:, num_decode_tokens:]
                 beta_non_spec = beta_non_spec[:, num_decode_tokens:]
 
-            use_fla_gdn_prefill = get_pcp_group().world_size == 1 and get_current_hardware_profile().supports(
-                HardwareCapability.FLA_GDN_PREFILL
-            )
-            fla_gdn_prefill_op = _get_fla_gdn_prefill_op() if use_fla_gdn_prefill else None
-            # The built-in fused operator is NPU-only. Keep CPU/unit-test
-            # dispatch on the Triton-compatible path even when its availability
-            # probe was cached globally.
-            use_fused_chunk = (
-                fla_gdn_prefill_op is None
-                and query_non_spec.device.type != "cpu"
-                and AscendGatedDeltaNetAttention._probe_fused_chunk()
-                and get_pcp_group().world_size == 1
-            )
-            if fla_gdn_prefill_op is not None:
+            chunk_meta = attn_metadata.non_spec_prefill_metadata.chunk
+            if isinstance(chunk_meta, XllmMegaGdnMetadata):
+                if not chunk_meta.supports(query_non_spec, value_non_spec):
+                    raise RuntimeError("xLLM MegaChunkGdn cannot run with this prefill tensor shape or dtype")
+                if forward_context.cudagraph_runtime_mode != CUDAGraphMode.NONE:
+                    raise RuntimeError("xLLM MegaChunkGdn requires eager execution for prefill")
                 initial_state = gather_ssm_states(
                     ssm_state,
                     prefill_state_indices,
                     prefill_has_initial_state,
+                    output_dtype=value_non_spec.dtype,
                 )
-                (core_attn_out_non_spec, last_recurrent_state) = DeviceOperator.fla_gdn_prefill(
-                    q=query_non_spec,
-                    k=key_non_spec,
-                    v=value_non_spec,
-                    g=g_non_spec,
-                    beta=beta_non_spec,
-                    initial_state=initial_state,
-                    scale=key_non_spec.shape[-1] ** -0.5,
-                    prebuilt_meta=attn_metadata.non_spec_prefill_metadata.chunk,
-                    fused_fwd=fla_gdn_prefill_op,
+                mega_prefill = get_xllm_mega_gdn_prefill(value_non_spec.device, value_non_spec.dtype)
+                core_attn_out_non_spec, last_recurrent_state = mega_prefill(
+                    query_non_spec, key_non_spec, value_non_spec, g_non_spec, beta_non_spec, initial_state, chunk_meta
                 )
-                scatter_ssm_states_(
-                    ssm_state,
-                    prefill_state_indices,
-                    last_recurrent_state.to(ssm_state.dtype).contiguous(),
-                )
-            elif use_fused_chunk:
-                # Gather only the selected rows. Generic advanced indexing first
-                # materializes the complete cache when ssm_state has a padded
-                # batch stride under the hybrid KV-cache manager.
-                initial_state = gather_ssm_states(
-                    ssm_state,
-                    prefill_state_indices,
-                    prefill_has_initial_state,
-                    output_dtype=torch.bfloat16,
-                )
-                core_attn_out_non_spec, last_recurrent_state = (
-                    AscendGatedDeltaNetAttention._chunk_gated_delta_rule_fused(
+                scatter_ssm_states_(ssm_state, prefill_state_indices, last_recurrent_state)
+            else:
+                single_pcp_rank = get_pcp_group().world_size == 1
+                fla_gdn_prefill_op = None
+                if single_pcp_rank and get_current_hardware_profile().supports(HardwareCapability.FLA_GDN_PREFILL):
+                    fla_gdn_prefill_op = _get_fla_gdn_prefill_op()
+                if fla_gdn_prefill_op is not None:
+                    initial_state = gather_ssm_states(
+                        ssm_state,
+                        prefill_state_indices,
+                        prefill_has_initial_state,
+                    )
+                    core_attn_out_non_spec, last_recurrent_state = DeviceOperator.fla_gdn_prefill(
                         q=query_non_spec,
                         k=key_non_spec,
                         v=value_non_spec,
                         g=g_non_spec,
                         beta=beta_non_spec,
                         initial_state=initial_state,
-                        cu_seqlens=prefill_query_start_loc,
                         scale=key_non_spec.shape[-1] ** -0.5,
+                        prebuilt_meta=chunk_meta,
+                        fused_fwd=fla_gdn_prefill_op,
                     )
-                )
-                scatter_ssm_states_(
-                    ssm_state,
-                    prefill_state_indices,
-                    last_recurrent_state,
-                )
-            else:
-                initial_state = ssm_state[prefill_state_indices].transpose(-1, -2).contiguous()
-                clear_ssm_states(initial_state, prefill_has_initial_state)
-                (core_attn_out_non_spec, last_recurrent_state) = chunk_gated_delta_rule(
-                    q=query_non_spec,
-                    k=key_non_spec,
-                    v=value_non_spec,
-                    g=g_non_spec,
-                    beta=beta_non_spec,
-                    initial_state=initial_state,
-                    output_final_state=True,
-                    cu_seqlens=prefill_query_start_loc,
-                    prebuilt_meta=attn_metadata.non_spec_prefill_metadata.chunk,
-                    head_first=False,
-                    use_qk_l2norm_in_kernel=True,
-                )
-                ssm_state[prefill_state_indices] = (
-                    last_recurrent_state.transpose(-1, -2).contiguous().to(ssm_state.dtype)
-                )
+                    scatter_ssm_states_(
+                        ssm_state,
+                        prefill_state_indices,
+                        last_recurrent_state.to(ssm_state.dtype).contiguous(),
+                    )
+                elif (
+                    single_pcp_rank
+                    and query_non_spec.device.type != "cpu"
+                    and AscendGatedDeltaNetAttention._probe_fused_chunk()
+                ):
+                    # Gather only the selected rows. Generic advanced indexing first
+                    # materializes the complete cache when ssm_state has a padded
+                    # batch stride under the hybrid KV-cache manager.
+                    initial_state = gather_ssm_states(
+                        ssm_state,
+                        prefill_state_indices,
+                        prefill_has_initial_state,
+                        output_dtype=torch.bfloat16,
+                    )
+                    core_attn_out_non_spec, last_recurrent_state = (
+                        AscendGatedDeltaNetAttention._chunk_gated_delta_rule_fused(
+                            q=query_non_spec,
+                            k=key_non_spec,
+                            v=value_non_spec,
+                            g=g_non_spec,
+                            beta=beta_non_spec,
+                            initial_state=initial_state,
+                            cu_seqlens=prefill_query_start_loc,
+                            scale=key_non_spec.shape[-1] ** -0.5,
+                        )
+                    )
+                    scatter_ssm_states_(
+                        ssm_state,
+                        prefill_state_indices,
+                        last_recurrent_state,
+                    )
+                else:
+                    initial_state = ssm_state[prefill_state_indices].transpose(-1, -2).contiguous()
+                    clear_ssm_states(initial_state, prefill_has_initial_state)
+                    (core_attn_out_non_spec, last_recurrent_state) = chunk_gated_delta_rule(
+                        q=query_non_spec,
+                        k=key_non_spec,
+                        v=value_non_spec,
+                        g=g_non_spec,
+                        beta=beta_non_spec,
+                        initial_state=initial_state,
+                        output_final_state=True,
+                        cu_seqlens=prefill_query_start_loc,
+                        prebuilt_meta=chunk_meta,
+                        head_first=False,
+                        use_qk_l2norm_in_kernel=True,
+                    )
+                    ssm_state[prefill_state_indices] = (
+                        last_recurrent_state.transpose(-1, -2).contiguous().to(ssm_state.dtype)
+                    )
             if split_non_spec:
                 core_attn_out_non_spec = torch.cat(
                     [core_attn_out_decode, core_attn_out_non_spec],

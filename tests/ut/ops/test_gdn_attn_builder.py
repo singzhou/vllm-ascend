@@ -1006,6 +1006,45 @@ def test_builder_builds_prebuilt_chunk_metadata_with_prefill_query_start_loc(mon
     assert chunk_meta.chunk_indices_chunk64_host == tuple(expected_chunk_indices.to(torch.int64).reshape(-1).tolist())
 
 
+def test_mega_builder_skips_native_chunk_plan():
+    batch_spec = BatchSpec(seq_lens=[63, 129], query_lens=[63, 129])
+    builder, common, _ = _build_attn_metadata(batch_spec, num_speculative_tokens=0, num_decode_draft_tokens_cpu=None)
+    builder.use_xllm_mega_prefill = True
+    with patch.object(ascend_gdn_attn_builder, "_build_non_spec_chunked_prefill_metadata") as native:
+        metadata = builder.build(0, common)
+
+    native.assert_not_called()
+    chunk = metadata.non_spec_prefill_metadata.chunk
+    assert isinstance(chunk, ascend_gdn_attn_builder.XllmMegaGdnMetadata)
+    assert metadata.chunk_indices is None
+    assert metadata.chunk_offsets is None
+    assert chunk.num_chunks == 3
+    assert chunk.cu_seqlens is metadata.prefill_query_start_loc
+
+
+def test_mega_builder_compacts_recurrent_state_rows_with_empty_sequences(monkeypatch):
+    _patch_missing_runtime_cdiv(monkeypatch)
+    batch_spec = BatchSpec(seq_lens=[8, 4, 0, 12], query_lens=[4, 4, 0, 8])
+    draft_tokens = torch.tensor([-1, 3, -1, -1], dtype=torch.int32)
+    builder, common, _ = _build_attn_metadata(
+        batch_spec, num_speculative_tokens=3, num_decode_draft_tokens_cpu=draft_tokens
+    )
+    builder.use_xllm_mega_prefill = True
+    metadata = builder.build(
+        0,
+        common,
+        num_accepted_tokens=torch.ones(batch_spec.batch_size, dtype=torch.int32),
+        num_decode_draft_tokens_cpu=draft_tokens,
+    )
+
+    prefill = metadata.non_spec_prefill_metadata
+    assert prefill.causal_conv1d.query_start_loc.tolist() == [0, 4, 4, 12]
+    assert prefill.causal_conv1d.initial_state_mode.tolist() == [True, False, True]
+    assert prefill.chunk.cu_seqlens.tolist() == [0, 4, 12]
+    torch.testing.assert_close(metadata.prefill_state_indices, metadata.non_spec_state_indices_tensor[[0, 2]])
+    assert metadata.prefill_has_initial_state.tolist() == [True, True]
+
+
 @pytest.mark.parametrize(
     "batch_spec",
     [
