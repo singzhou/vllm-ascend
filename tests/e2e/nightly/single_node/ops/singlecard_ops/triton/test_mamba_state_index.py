@@ -413,7 +413,6 @@ def test_gather_and_scatter_ssm_states(
         rtol=0,
         atol=0,
     )
-
     if padding:
         storage_cpu = storage.cpu()
         for state_idx in range(num_states - 1):
@@ -425,6 +424,33 @@ def test_gather_and_scatter_ssm_states(
                 rtol=0,
                 atol=0,
             )
+
+
+@pytest.mark.parametrize("packed_dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("masked_scatter", [False, True])
+def test_gather_and_scatter_transposed_ssm_states(packed_dtype, masked_scatter):
+    dim, heads = 128, 8
+    row_size = heads * dim * dim
+    backing = torch.randn((5, row_size + 64), device="npu")
+    padding = backing[:, row_size:].clone()
+    state = backing[:, :row_size].view(5, heads, dim, dim)
+    before = state.clone()
+    indices = torch.tensor([3, 0, 2], dtype=torch.int32, device="npu")
+    initialized = torch.tensor([True, False, True], device="npu")
+    gathered = gather_ssm_states(state, indices, initialized, output_dtype=packed_dtype, transpose_last_two=True)
+    selected = torch.stack((before[3], torch.zeros_like(before[0]), before[2]))
+    torch.testing.assert_close(gathered, selected.transpose(-1, -2).to(packed_dtype), rtol=0, atol=0)
+
+    updated = torch.randn_like(gathered)
+    scatter_ssm_states_(
+        state, indices, updated, valid_rows=initialized if masked_scatter else None, transpose_last_two=True
+    )
+    before[3] = updated[0].transpose(-1, -2)
+    before[2] = updated[2].transpose(-1, -2)
+    if not masked_scatter:
+        before[0] = updated[1].transpose(-1, -2)
+    torch.testing.assert_close(state, before, rtol=0, atol=0)
+    torch.testing.assert_close(backing[:, row_size:], padding, rtol=0, atol=0)
 
 
 def test_rejects_empty_state_cache() -> None:

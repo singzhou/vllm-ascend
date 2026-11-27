@@ -43,7 +43,7 @@ from vllm_ascend.ops.triton.fla.utils import (
     prepare_update_chunk_offsets,
 )
 from vllm_ascend.ops.triton.mamba.gdn_state_indices import fused_gdn_spec_metadata, fused_gdn_state_indices
-from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata, get_xllm_mega_gdn_prefill
 
 _GDN_CHUNK_SIZE = 64
 # Keep this aligned with solve_tril.LARGE_BLOCK_T in ops/triton/fla/solve_tril.py.
@@ -413,6 +413,8 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
         device: torch.device,
     ):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device)
+        if self.use_xllm_mega_prefill:
+            get_xllm_mega_gdn_prefill(device, vllm_config.model_config.dtype)
         from vllm_ascend.worker.v2.spec_decode.dspark.av_config import adaptive_verification_enabled
 
         # Gate ragged-decode GDN metadata on the adapted AV manager.
@@ -926,19 +928,21 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
             assert spec_sequence_indices is not None
             assert non_spec_sequence_indices is not None
 
-            non_spec_query_lens_cpu = query_lens_cpu[~spec_sequence_masks_cpu]
-            num_decodes = (non_spec_query_lens_cpu == 1).sum().item()
+            non_spec_mask_cpu = ~spec_sequence_masks_cpu
+            non_spec_query_lens_cpu = query_lens_cpu[non_spec_mask_cpu]
             num_zero_len = (non_spec_query_lens_cpu == 0).sum().item()
+            num_decodes = 0
+            if self.use_xllm_mega_prefill and m.is_prefilling is not None and num_zero_len == 0:
+                decode_rows = (non_spec_query_lens_cpu == 1) & ~m.is_prefilling[non_spec_mask_cpu]
+                # The existing decode+prefill path consumes a decode prefix.
+                # Build that split only when the scheduler has already ordered it.
+                num_decodes = decode_rows.sum().item()
+                if not decode_rows[:num_decodes].all():
+                    num_decodes = 0
             num_prefills = non_spec_query_lens_cpu.size(0) - num_decodes - num_zero_len
             num_decode_tokens = num_decodes
             num_prefill_tokens = non_spec_query_lens_cpu.sum().item() - num_decode_tokens
             num_spec_decode_tokens = query_lens_cpu.sum().item() - num_prefill_tokens - num_decode_tokens
-
-            if num_decodes > 0 and num_spec_decodes > 0:
-                num_prefills += num_decodes
-                num_prefill_tokens += num_decode_tokens
-                num_decodes = 0
-                num_decode_tokens = 0
 
             if num_prefills == 0 and num_decodes == 0:
                 spec_token_size = min(
@@ -1007,7 +1011,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                     dtype=torch.int32,
                 )
                 torch.cumsum(
-                    query_lens_cpu[~spec_sequence_masks_cpu],
+                    non_spec_query_lens_cpu,
                     dim=0,
                     out=non_spec_query_start_loc_cpu[1:],
                 )
@@ -1027,7 +1031,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
         non_spec_chunked_prefill_metadata: GDNChunkedPrefillMetadata | XllmMegaGdnMetadata | None = None
         has_initial_state: torch.Tensor | None = None
         if num_prefills > 0:
-            if spec_sequence_masks is None and num_decodes > 0:
+            if num_decodes > 0:
                 assert non_spec_query_start_loc is not None
                 assert non_spec_query_start_loc_cpu is not None
                 prefill_query_start_loc = non_spec_query_start_loc[num_decodes:] - num_decode_tokens
@@ -1058,7 +1062,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                 context_lens_tensor=m.compute_num_computed_tokens(),
                 non_spec_sequence_indices=non_spec_sequence_indices,
             )
-            if spec_sequence_masks is None and num_decodes > 0:
+            if num_decodes > 0:
                 prefill_has_initial_state = has_initial_state[num_decodes:]
             else:
                 prefill_has_initial_state = has_initial_state
@@ -1444,7 +1448,7 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
 
         prefill_state_indices: torch.Tensor | None = None
         if num_prefills > 0:
-            if spec_sequence_masks is None and num_decodes > 0:
+            if num_decodes > 0:
                 assert non_spec_state_indices_tensor is not None
                 prefill_state_indices = non_spec_state_indices_tensor[num_decodes:]
             else:
@@ -1457,10 +1461,6 @@ class AscendGDNAttentionMetadataBuilder(GDNAttentionMetadataBuilder):
                 prefill_state_indices = prefill_state_indices.index_select(
                     0, non_spec_chunked_prefill_metadata.active_rows
                 )
-
-        assert not (num_decodes > 0 and num_spec_decodes > 0), (
-            f"num_decodes: {num_decodes}, num_spec_decodes: {num_spec_decodes}"
-        )
 
         attn_metadata = GDNAttentionMetadata(
             num_prefills=num_prefills,

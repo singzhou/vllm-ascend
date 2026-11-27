@@ -38,6 +38,7 @@ from vllm.v1.attention.backend import AttentionBackend, AttentionMetadata  # typ
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
 from vllm.v1.attention.backends.utils import PAD_SLOT_ID
 
+from vllm_ascend import envs
 from vllm_ascend.attention.utils import (
     maybe_save_kv_layer_to_connector,
     wait_for_kv_layer_from_connector,
@@ -52,7 +53,11 @@ from vllm_ascend.ops.triton.fla.fused_qkvzba_split_reshape import fused_qkvzba_s
 from vllm_ascend.ops.triton.fla.utils import clear_ssm_states
 from vllm_ascend.ops.triton.mamba.causal_conv1d import extract_last_width
 from vllm_ascend.ops.triton.mamba.state_index import gather_ssm_states, scatter_ssm_states_
-from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata, get_xllm_mega_gdn_prefill
+from vllm_ascend.ops.xllm_mega_gdn import (
+    XllmMegaGdnMetadata,
+    get_xllm_mega_gdn_prefill,
+    validate_xllm_mega_gdn,
+)
 
 _PACKED_CONV_WEIGHT_NAME = "ascend_conv1d_weight"
 
@@ -369,6 +374,14 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
         return
 
     def get_attn_backend(self) -> type[AttentionBackend]:
+        if envs.VLLM_ASCEND_ENABLE_XLLM_MEGA_GDN:
+            validate_xllm_mega_gdn(
+                self.model_config.dtype,
+                self.num_k_heads // self.tp_size,
+                self.num_v_heads // self.tp_size,
+                self.head_k_dim,
+                self.head_v_dim,
+            )
         return AscendGDNFusedAttentionBackend
 
     def forward(
@@ -481,6 +494,13 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
         assert isinstance(attn_metadata, dict)
         attn_metadata = attn_metadata[self.prefix]
         assert isinstance(attn_metadata, GDNAttentionMetadata)
+        chunk_meta = attn_metadata.non_spec_prefill_metadata.chunk if attn_metadata.num_prefills > 0 else None
+        if isinstance(chunk_meta, XllmMegaGdnMetadata) and (
+            forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL
+            or (mixed_qkv.device.type == "npu" and torch.npu.is_current_stream_capturing())
+        ):
+            raise RuntimeError("xLLM MegaChunkGdn prefill requires execution outside ACL graph capture")
+
         spec_sequence_masks = attn_metadata.spec_sequence_masks
         spec_token_indx = attn_metadata.spec_token_indx
         non_spec_token_indx = attn_metadata.non_spec_token_indx
@@ -551,14 +571,10 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                 )
             mixed_qkv_spec = output_spec
 
-        # Ordinary mixed batches keep decode token-major while prefill can
-        # use head-first convolution output. PCP retains its collective path.
-        split_conv = (
-            spec_sequence_masks is None
-            and attn_metadata.num_prefills > 0
-            and attn_metadata.num_decodes > 0
-            and get_pcp_group().world_size == 1
-        )
+        # Mixed batches keep decode token-major while prefill can use
+        # head-first convolution output. PCP retains its collective path.
+        split_non_spec = attn_metadata.num_prefills > 0 and attn_metadata.num_decodes > 0
+        split_conv = split_non_spec and get_pcp_group().world_size == 1
         decode_conv_qkv = None
 
         # 1.2: Process the remaining part
@@ -717,9 +733,6 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
             g_non_spec = g
             beta_non_spec = beta
 
-        split_non_spec = (
-            spec_sequence_masks is None and attn_metadata.num_prefills > 0 and attn_metadata.num_decodes > 0
-        )
         num_decode_tokens = attn_metadata.num_decode_tokens
 
         # 2.1: Process the multi-query part
@@ -814,23 +827,22 @@ class AscendGatedDeltaNetAttention(GatedDeltaNetAttention):
                 g_non_spec = g_non_spec[:, num_decode_tokens:]
                 beta_non_spec = beta_non_spec[:, num_decode_tokens:]
 
-            chunk_meta = attn_metadata.non_spec_prefill_metadata.chunk
+            assert chunk_meta is not None
             if isinstance(chunk_meta, XllmMegaGdnMetadata):
                 if not chunk_meta.supports(query_non_spec, value_non_spec):
                     raise RuntimeError("xLLM MegaChunkGdn cannot run with this prefill tensor shape or dtype")
-                if forward_context.cudagraph_runtime_mode != CUDAGraphMode.NONE:
-                    raise RuntimeError("xLLM MegaChunkGdn requires eager execution for prefill")
                 initial_state = gather_ssm_states(
                     ssm_state,
                     prefill_state_indices,
                     prefill_has_initial_state,
                     output_dtype=value_non_spec.dtype,
+                    transpose_last_two=True,
                 )
                 mega_prefill = get_xllm_mega_gdn_prefill(value_non_spec.device, value_non_spec.dtype)
                 core_attn_out_non_spec, last_recurrent_state = mega_prefill(
                     query_non_spec, key_non_spec, value_non_spec, g_non_spec, beta_non_spec, initial_state, chunk_meta
                 )
-                scatter_ssm_states_(ssm_state, prefill_state_indices, last_recurrent_state)
+                scatter_ssm_states_(ssm_state, prefill_state_indices, last_recurrent_state, transpose_last_two=True)
             else:
                 single_pcp_rank = get_pcp_group().world_size == 1
                 fla_gdn_prefill_op = None

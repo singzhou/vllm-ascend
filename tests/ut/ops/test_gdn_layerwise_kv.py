@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from torch import nn
+from vllm.config.compilation import CUDAGraphMode
 from vllm.forward_context import ForwardContext, override_forward_context
 from vllm.model_executor.layers.mamba.gdn.qwen_gdn_linear_attn import (
     qwen_gdn_attention_core,
@@ -232,8 +233,16 @@ def test_fla_prefill_uses_host_metadata_with_strided_ssm_cache():
     torch.testing.assert_close(model.ssm_state[1], torch.full_like(model.ssm_state[1], 3))
 
 
-@pytest.mark.parametrize("kernel_fault", [False, True])
-def test_mega_dispatch_never_probes_or_retries_native(kernel_fault):
+@pytest.mark.parametrize(
+    ("mode", "kernel_fault"),
+    [
+        (CUDAGraphMode.NONE, False),
+        (CUDAGraphMode.PIECEWISE, False),
+        (CUDAGraphMode.PIECEWISE, True),
+        (CUDAGraphMode.FULL, False),
+    ],
+)
+def test_mega_dispatch_never_probes_or_retries_native(mode, kernel_fault):
     model = _GDNForwardWrapper()
     metadata = _make_prefill_metadata()
     metadata.non_spec_prefill_metadata.chunk = XllmMegaGdnMetadata(metadata.prefill_query_start_loc, 1, 2)
@@ -241,6 +250,7 @@ def test_mega_dispatch_never_probes_or_retries_native(kernel_fault):
         no_compile_layers={model.prefix: model},
         attn_metadata={model.prefix: metadata},
         slot_mapping={},
+        cudagraph_runtime_mode=mode,
     )
     qkv = torch.arange(4, dtype=torch.float32).reshape(2, 2)
     output = torch.empty(2, 1, 2)
@@ -259,19 +269,24 @@ def test_mega_dispatch_never_probes_or_retries_native(kernel_fault):
         patch("vllm_ascend.ops.gdn.get_xllm_mega_gdn_prefill", return_value=mega),
         patch("vllm_ascend.ops.gdn.gather_ssm_states", return_value=model.ssm_state),
         patch("vllm_ascend.ops.gdn.scatter_ssm_states_") as scatter,
-        patch("vllm_ascend.ops.gdn.causal_conv1d_fn", side_effect=lambda x, *a, **k: x.clone()),
+        patch("vllm_ascend.ops.gdn.causal_conv1d_fn", side_effect=lambda x, *a, **k: x.clone()) as conv,
         patch("vllm_ascend.ops.gdn.wait_for_kv_layer_from_connector"),
         patch("vllm_ascend.ops.gdn.record_attention_compute_start"),
         patch("vllm_ascend.ops.gdn.maybe_save_kv_layer_to_connector"),
     ):
-        if kernel_fault:
+        if mode == CUDAGraphMode.FULL:
+            with pytest.raises(RuntimeError, match="outside ACL graph capture"):
+                model._forward_core(qkv, torch.zeros(2, 1), torch.zeros(2, 1), output)
+            conv.assert_not_called()
+            scatter.assert_not_called()
+        elif kernel_fault:
             with pytest.raises(RuntimeError, match="kernel fault"):
                 model._forward_core(qkv, torch.zeros(2, 1), torch.zeros(2, 1), output)
             scatter.assert_not_called()
         else:
             model._forward_core(qkv, torch.zeros(2, 1), torch.zeros(2, 1), output)
             scatter.assert_called_once()
-    mega.assert_called_once()
+    assert mega.call_count == int(mode != CUDAGraphMode.FULL)
     native_probe.assert_not_called()
     native.assert_not_called()
     triton.assert_not_called()

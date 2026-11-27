@@ -21,6 +21,7 @@ from vllm_ascend.ops.gdn_attn_builder import (
     GDNSpecCausalConv1dMetadata,
     GDNSpecDecodeMetadata,
 )
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata
 
 
 def _make_mixed_metadata() -> GDNAttentionMetadata:
@@ -278,6 +279,58 @@ def test_mixed_non_spec_splits_conv_per_slice(initial_state) -> None:
             ]
         ),
     )
+
+
+def test_mega_mixed_prefill_keeps_both_recurrent_lanes_and_restores_token_order():
+    layer = _make_layer()
+    metadata = _make_mixed_metadata()
+    metadata.num_actual_tokens = 5
+    metadata.num_spec_decodes = 1
+    metadata.num_spec_decode_tokens = 2
+    metadata.spec_sequence_masks = torch.tensor([False, True, False])
+    metadata.spec_token_indx = torch.tensor([1, 2])
+    metadata.non_spec_token_indx = torch.tensor([0, 3, 4])
+    metadata.spec_state_indices_tensor = torch.tensor([[1, 1]], dtype=torch.int32)
+    spec_offsets = torch.tensor([0, 2], dtype=torch.int32)
+    metadata.spec_decode_metadata = GDNSpecDecodeMetadata(
+        spec_causal_conv1d=GDNSpecCausalConv1dMetadata(
+            spec_offsets, metadata.spec_state_indices_tensor, torch.tensor([1], dtype=torch.int32)
+        ),
+        actual_seq_lengths=spec_offsets,
+    )
+    chunk = XllmMegaGdnMetadata(metadata.prefill_query_start_loc, 1, 2)
+    metadata.non_spec_prefill_metadata.chunk = chunk
+    context = ForwardContext(
+        no_compile_layers={layer.prefix: layer}, attn_metadata={layer.prefix: metadata}, slot_mapping={}
+    )
+    qkv = torch.arange(30, dtype=torch.float32).view(5, 6)
+    inputs = torch.zeros((5, 1))
+    out = torch.empty((5, 1, 2))
+    gating = (torch.zeros((1, 5, 1)), torch.ones((1, 5, 1)))
+    mega = Mock(side_effect=lambda _q, _k, v, _g, _beta, state, _meta: (v, state))
+    conv = Mock(side_effect=lambda x, *_a, **_kw: x.clone())
+    with (
+        override_forward_context(context),
+        patch("vllm_ascend.ops.gdn.get_pcp_group", return_value=SimpleNamespace(world_size=1)),
+        patch("vllm_ascend.ops.gdn.DeviceOperator.fused_gdn_gating", return_value=gating),
+        patch("vllm_ascend.ops.gdn.causal_conv1d_fn", conv),
+        patch("vllm_ascend.ops.gdn.causal_conv1d_update", conv),
+        patch("vllm_ascend.ops.gdn.l2norm_fwd", side_effect=lambda x: x),
+        patch("vllm_ascend.ops.gdn.recurrent_gated_delta_rule", side_effect=lambda _q, _k, v, *_a, **_kw: v) as rnn,
+        patch("vllm_ascend.ops.gdn.get_xllm_mega_gdn_prefill", return_value=mega),
+        patch("vllm_ascend.ops.gdn.gather_ssm_states", return_value=layer.kv_cache[1][1:]),
+        patch("vllm_ascend.ops.gdn.scatter_ssm_states_"),
+        patch("vllm_ascend.ops.gdn.chunk_gated_delta_rule") as native,
+        patch.object(XllmMegaGdnMetadata, "supports", return_value=True),
+    ):
+        AscendGatedDeltaNetAttention._forward_core(layer, qkv, inputs, inputs, out)
+
+    assert rnn.call_count == 2
+    assert [call.args[2].shape[0] for call in rnn.call_args_list] == [2, 1]
+    mega.assert_called_once()
+    assert mega.call_args.args[-1] is chunk
+    native.assert_not_called()
+    torch.testing.assert_close(out, qkv[:, 4:].unsqueeze(1))
 
 
 @pytest.mark.parametrize("speculative", [False, True])

@@ -442,6 +442,21 @@ def test_ascend_gdn_attention_uses_ascend_backend():
     assert AscendGDNAttentionBackend.get_builder_cls() is AscendGDNAttentionMetadataBuilder
 
 
+def test_mega_backend_validates_the_rank_local_layer_configuration(monkeypatch):
+    monkeypatch.setenv("VLLM_ASCEND_ENABLE_XLLM_MEGA_GDN", "1")
+    layer = SimpleNamespace(
+        model_config=SimpleNamespace(dtype=torch.bfloat16),
+        tp_size=4,
+        num_k_heads=16,
+        num_v_heads=48,
+        head_k_dim=128,
+        head_v_dim=128,
+    )
+    with patch.object(ascend_gdn, "validate_xllm_mega_gdn") as validate:
+        assert AscendGatedDeltaNetAttention.get_attn_backend(layer) is AscendGDNFusedAttentionBackend
+    validate.assert_called_once_with(torch.bfloat16, 4, 12, 128, 128)
+
+
 def test_fused_backend_selects_host_metadata_only_when_supported(monkeypatch):
     monkeypatch.setattr(
         AscendGatedDeltaNetAttention,
@@ -1043,6 +1058,40 @@ def test_mega_builder_compacts_recurrent_state_rows_with_empty_sequences(monkeyp
     assert prefill.chunk.cu_seqlens.tolist() == [0, 4, 12]
     torch.testing.assert_close(metadata.prefill_state_indices, metadata.non_spec_state_indices_tensor[[0, 2]])
     assert metadata.prefill_has_initial_state.tolist() == [True, True]
+
+
+@pytest.mark.parametrize("prefill_tokens", [0, 1, 5])
+def test_mega_builder_keeps_ordinary_decodes_with_speculative_requests(monkeypatch, prefill_tokens):
+    _patch_missing_runtime_cdiv(monkeypatch)
+    seq_lens = [8, 16]
+    query_lens = [1, 4]
+    if prefill_tokens:
+        seq_lens.append(prefill_tokens)
+        query_lens.append(prefill_tokens)
+    batch_spec = BatchSpec(seq_lens=seq_lens, query_lens=query_lens)
+    draft_tokens = torch.tensor([-1, 3, *([-1] if prefill_tokens else [])], dtype=torch.int32)
+    builder, common, _ = _build_attn_metadata(
+        batch_spec, num_speculative_tokens=3, num_decode_draft_tokens_cpu=draft_tokens
+    )
+    common.is_prefilling = torch.tensor([False, False, *([True] if prefill_tokens else [])])
+    builder.use_xllm_mega_prefill = True
+    metadata = builder.build(
+        0,
+        common,
+        num_accepted_tokens=torch.ones(batch_spec.batch_size, dtype=torch.int32),
+        num_decode_draft_tokens_cpu=draft_tokens,
+    )
+
+    assert metadata.num_decodes == metadata.num_decode_tokens == metadata.num_spec_decodes == 1
+    assert metadata.non_spec_decode_metadata.actual_seq_lengths.tolist() == [0, 1]
+    assert metadata.spec_token_indx.tolist() == [1, 2, 3, 4]
+    assert metadata.non_spec_token_indx.tolist() == [0, *range(5, 5 + prefill_tokens)]
+    if prefill_tokens:
+        assert metadata.num_prefills == 1
+        assert metadata.non_spec_prefill_metadata.chunk.cu_seqlens.tolist() == [0, prefill_tokens]
+        assert metadata.prefill_has_initial_state.tolist() == [False]
+    else:
+        assert metadata.non_spec_prefill_metadata is None
 
 
 @pytest.mark.parametrize(

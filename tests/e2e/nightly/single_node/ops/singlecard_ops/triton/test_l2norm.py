@@ -3,8 +3,9 @@ import gc
 import pytest
 import torch
 import torch.nn.functional as F
+from vllm.third_party.flash_linear_attention.ops.l2norm import l2norm_fwd as reference_l2norm
 
-from vllm_ascend.ops.triton.fla.l2norm import l2norm_fwd
+from vllm_ascend.ops.triton.fla.l2norm import l2norm_fwd, l2norm_fwd_from_head_first
 from vllm_ascend.ops.triton.triton_utils import init_device_properties_triton
 
 
@@ -37,3 +38,15 @@ def test_l2norm(B: int, T: int, H: int, D: int, dtype: torch.dtype):
     gc.collect()
     torch.npu.empty_cache()
     torch.npu.reset_peak_memory_stats()
+
+
+@pytest.mark.parametrize("tokens", [17, 385, 4096])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_l2norm_head_first_produces_packed_token_major_output(tokens, dtype):
+    init_device_properties_triton()
+    # Slice consecutive heads out of a shared convolution output.
+    head_first = torch.randn((12, tokens, 128), dtype=dtype, device="npu")[4:8]
+    view = head_first.transpose(0, 1).unsqueeze(0)
+    output = l2norm_fwd_from_head_first(view)
+    assert output.is_contiguous()
+    torch.testing.assert_close(output, reference_l2norm(view.contiguous()), rtol=0, atol=0)

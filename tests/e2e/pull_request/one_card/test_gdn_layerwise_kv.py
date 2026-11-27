@@ -16,8 +16,10 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 from torch._inductor import config as inductor_config
+from vllm.config.compilation import CUDAGraphMode
 from vllm.forward_context import ForwardContext, override_forward_context
 
 from tests.ut.ops.test_gdn_layerwise_kv import (
@@ -26,6 +28,35 @@ from tests.ut.ops.test_gdn_layerwise_kv import (
     _run_gdn_forward,
 )
 from vllm_ascend.ops.gdn import AscendGatedDeltaNetAttention
+from vllm_ascend.ops.xllm_mega_gdn import XllmMegaGdnMetadata
+
+
+def test_mega_prefill_rejects_an_actively_capturing_npu_stream():
+    device = torch.device("npu")
+    model = _GDNForwardWrapper().to(device)
+    metadata = _make_prefill_metadata(device)
+    metadata.non_spec_prefill_metadata.chunk = XllmMegaGdnMetadata(metadata.prefill_query_start_loc, 1, 2)
+    context = ForwardContext(
+        no_compile_layers={model.prefix: model},
+        attn_metadata={model.prefix: metadata},
+        slot_mapping={},
+        cudagraph_runtime_mode=CUDAGraphMode.PIECEWISE,
+    )
+    qkv = torch.ones((2, 2), device=device)
+    gates = torch.zeros((2, 1), device=device)
+    out = torch.empty_like(qkv)
+    graph = torch.npu.NPUGraph()
+    with (
+        override_forward_context(context),
+        patch("vllm_ascend.ops.gdn.wait_for_kv_layer_from_connector"),
+        patch("vllm_ascend.ops.gdn.record_attention_compute_start"),
+        torch.npu.graph(graph),
+    ):
+        with pytest.raises(RuntimeError, match="outside ACL graph capture"):
+            model._forward_core(qkv, gates, gates, out)
+        torch.add(qkv, 1, out=out)
+    graph.replay()
+    torch.testing.assert_close(out, qkv + 1)
 
 
 def test_npu_connector_observes_updated_gdn_state_after_compile():

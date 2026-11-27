@@ -48,7 +48,7 @@ def test_adapter_normalizes_qk_and_preserves_state_contract(monkeypatch):
     gate = torch.zeros(1, 2, 2, dtype=dtype)
     beta = torch.ones(1, 2, 2, dtype=torch.float32)
     initial_state = torch.zeros(1, 2, 128, 128, dtype=dtype)
-    initial_state[:, :, 0, 1] = 3
+    initial_state[:, :, 1, 0] = 3
     plan = xllm_mega_gdn.XllmMegaGdnMetadata(torch.tensor([0, 2], dtype=torch.int32), 1, 2)
 
     def fused(q_arg, k_arg, v_arg, g_arg, beta_arg, lower, full, minus_eye, cu, state, matrices, has_state):
@@ -78,6 +78,25 @@ def test_missing_opt_in_dependency_is_reported(monkeypatch):
     monkeypatch.setitem(sys.modules, "custom_ops_lib", None)
     with pytest.raises(RuntimeError, match="requires the xLLM MegaChunkGdn"):
         xllm_mega_gdn.XllmMegaGdnPrefill(torch.device("cpu"), torch.bfloat16)
+    with pytest.raises(RuntimeError, match="requires the xLLM MegaChunkGdn"):
+        xllm_mega_gdn.validate_xllm_mega_gdn(torch.bfloat16, 4, 8, 128, 128)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        (torch.float32, 4, 8, 128, 128),
+        (torch.bfloat16, 4, 8, 64, 128),
+        (torch.bfloat16, 4, 6, 128, 128),
+        (torch.bfloat16, 4, 68, 128, 128),
+    ],
+)
+def test_startup_rejects_unsupported_configuration_before_loading_vendor(monkeypatch, config):
+    load_vendor = Mock()
+    monkeypatch.setattr(xllm_mega_gdn, "_load_mega_chunk_gdn", load_vendor)
+    with pytest.raises(RuntimeError, match="Unsupported xLLM MegaChunkGdn configuration"):
+        xllm_mega_gdn.validate_xllm_mega_gdn(*config)
+    load_vendor.assert_not_called()
 
 
 def test_adapter_issues_one_op_without_device_readback(monkeypatch):

@@ -9,6 +9,8 @@ import torch
 from vllm.triton_utils import tl, triton
 
 STATE_IO_BLOCK_SIZE = 1024
+TRANSPOSE_STATE_DIM = 128
+TRANSPOSE_STATE_TILE = 64
 
 
 @triton.jit
@@ -76,6 +78,72 @@ def _scatter_ssm_states_kernel(
     )
 
 
+@triton.jit
+def _copy_transposed_ssm_states_kernel(
+    cache,
+    packed,
+    indices,
+    valid_rows,
+    stride_cache_batch: tl.int64,
+    stride_packed_batch: tl.int64,
+    stride_indices,
+    stride_valid_rows,
+    DIM: tl.constexpr,
+    TILE: tl.constexpr,
+    GATHER: tl.constexpr,
+    HAS_VALID_ROWS: tl.constexpr,
+):
+    tile = tl.program_id(0)
+    row = tl.program_id(1)
+    tiles_per_dim = DIM // TILE
+    head_offset = tile // (tiles_per_dim * tiles_per_dim) * DIM * DIM
+    m = tile // tiles_per_dim % tiles_per_dim * TILE + tl.arange(0, TILE)
+    n = tile % tiles_per_dim * TILE + tl.arange(0, TILE)
+    valid = True
+    if HAS_VALID_ROWS:
+        valid = tl.load(valid_rows + row * stride_valid_rows).to(tl.int1)
+    index = tl.load(indices + row * stride_indices, mask=valid, other=0).to(tl.int64)
+    cache_base = cache + index * stride_cache_batch + head_offset
+    packed_base = packed + row * stride_packed_batch + head_offset
+    input_offsets = m[:, None] * DIM + n[None, :]
+    output_offsets = n[:, None] * DIM + m[None, :]
+    if GATHER:
+        values = tl.load(cache_base + input_offsets, mask=valid, other=0)
+        tl.store(packed_base + output_offsets, tl.trans(values))
+    else:
+        values = tl.load(packed_base + input_offsets, mask=valid, other=0)
+        tl.store(cache_base + output_offsets, tl.trans(values), mask=valid)
+
+
+def _copy_transposed_ssm_states(
+    state: torch.Tensor,
+    indices: torch.Tensor,
+    packed: torch.Tensor,
+    valid_rows: torch.Tensor | None,
+    *,
+    gather: bool,
+) -> None:
+    if state.ndim != 4 or state.shape[-2:] != (TRANSPOSE_STATE_DIM, TRANSPOSE_STATE_DIM):
+        raise ValueError("Transposed state copies require [rows, heads, 128, 128] state tensors")
+    tiles_per_head = (TRANSPOSE_STATE_DIM // TRANSPOSE_STATE_TILE) ** 2
+    grid = (state.shape[1] * tiles_per_head, indices.numel())
+    _copy_transposed_ssm_states_kernel[grid](
+        state,
+        packed,
+        indices,
+        valid_rows,
+        state.stride(0),
+        packed.stride(0),
+        indices.stride(0),
+        valid_rows.stride(0) if valid_rows is not None else 0,
+        DIM=TRANSPOSE_STATE_DIM,
+        TILE=TRANSPOSE_STATE_TILE,
+        GATHER=gather,
+        HAS_VALID_ROWS=valid_rows is not None,
+        num_warps=8,
+    )
+
+
 def _validate_state_and_indices(
     state: torch.Tensor,
     indices: torch.Tensor,
@@ -132,6 +200,7 @@ def gather_ssm_states(
     has_initial_state: torch.Tensor,
     *,
     output_dtype: torch.dtype | None = None,
+    transpose_last_two: bool = False,
 ) -> torch.Tensor:
     """Gather selected rows from a state cache with a padded batch stride.
 
@@ -144,6 +213,7 @@ def gather_ssm_states(
     physical page padding. ``indices`` select physical state rows and may be
     unsorted or non-contiguous. Callers must provide valid row IDs. The
     optional ``output_dtype`` only changes the gathered output dtype.
+    ``transpose_last_two`` also transposes each 128 by 128 head matrix.
     """
     _validate_gather_inputs(state, indices, has_initial_state)
 
@@ -153,6 +223,9 @@ def gather_ssm_states(
         device=state.device,
     )
     if indices.numel() == 0:
+        return output
+    if transpose_last_two:
+        _copy_transposed_ssm_states(state, indices, output, has_initial_state, gather=True)
         return output
 
     row_size = math.prod(state.shape[1:])
@@ -178,6 +251,7 @@ def scatter_ssm_states_(
     source: torch.Tensor,
     *,
     valid_rows: torch.Tensor | None = None,
+    transpose_last_two: bool = False,
 ) -> None:
     """Write dense state rows into selected slots of a padded state cache.
 
@@ -186,6 +260,7 @@ def scatter_ssm_states_(
     select physical rows and may be unsorted or non-contiguous. ``source``
     must have the logical state shape and contiguous inner dimensions.
     Optional ``valid_rows`` skips inactive rows without reading their indices.
+    ``transpose_last_two`` also transposes each 128 by 128 source head matrix.
     """
     _validate_scatter_inputs(state, indices, source)
     if valid_rows is not None:
@@ -193,6 +268,9 @@ def scatter_ssm_states_(
         if not valid_rows.is_contiguous():
             raise ValueError("valid_rows must be contiguous")
     if indices.numel() == 0:
+        return
+    if transpose_last_two:
+        _copy_transposed_ssm_states(state, indices, source, valid_rows, gather=False)
         return
 
     row_size = math.prod(state.shape[1:])

@@ -64,3 +64,43 @@ def l2norm_fwd(x: torch.Tensor, eps: float = 1e-6, output_dtype: torch.dtype | N
     )
 
     return y.view(x_shape_og)
+
+
+@triton.jit(do_not_specialize=["num_tokens", "stride_head", "num_chunks"])
+def _l2norm_head_first_kernel(
+    x,
+    y,
+    num_tokens,
+    stride_head,
+    num_chunks,
+    NUM_HEADS: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
+):
+    head = tl.program_id(1)
+    rows = tl.program_id(0) * num_chunks * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
+    cols = tl.arange(0, HEAD_DIM)[None, :]
+    for chunk in range(num_chunks):
+        token = rows + chunk * BLOCK_ROWS
+        values = tl.load(x + head * stride_head + token * HEAD_DIM + cols, token < num_tokens, other=0).to(tl.float32)
+        normalized = values * tl.rsqrt(tl.sum(values * values, 1) + 1.0e-6)[:, None]
+        tl.store(y + token * (NUM_HEADS * HEAD_DIM) + head * HEAD_DIM + cols, normalized, token < num_tokens)
+
+
+def l2norm_fwd_from_head_first(x: torch.Tensor) -> torch.Tensor:
+    """Normalize a [1, T, H, D] view of [H, T, D] into packed token-major rows."""
+    _, num_tokens, num_heads, head_dim = x.shape
+    output = torch.empty(x.shape, dtype=x.dtype, device=x.device)
+    block_rows = 32
+    grid_tokens = min(triton.cdiv(num_tokens, block_rows), max(1, get_vectorcore_num() // num_heads))
+    _l2norm_head_first_kernel[(grid_tokens, num_heads)](
+        x,
+        output,
+        num_tokens,
+        x.stride(2),
+        triton.cdiv(num_tokens, grid_tokens * block_rows),
+        num_heads,
+        head_dim,
+        block_rows,
+    )
+    return output
