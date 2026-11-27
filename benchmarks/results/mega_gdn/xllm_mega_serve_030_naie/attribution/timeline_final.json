@@ -1,0 +1,1165 @@
+{
+  "baseline": [
+    {
+      "rank": "rank0",
+      "capture": "rank0_89778_20261126105951111_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1335.90925,
+      "device_free_ms": 484.836,
+      "device_free_pct": 36.292584994078005,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1574,
+        "EVENT WAIT": 1068,
+        "SDMA": 3070,
+        "Write Value": 4182,
+        "Notify Wait": 3723,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 102.66916,
+          "device_free_during_scope_ms": 43.088,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 8,
+        "sum_ms": 7.63796
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 96.21432231249999,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 91.37020559375,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank0",
+      "capture": "rank0_89778_20261126105953426_ascend_pt",
+      "profile_mode": "sync",
+      "scope_first_to_last_device_compute_ms": 1406.96675,
+      "device_free_ms": 373.087,
+      "device_free_pct": 26.517115631908144,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1541,
+        "EVENT WAIT": 1085,
+        "SDMA": 3070,
+        "Write Value": 4182,
+        "Notify Wait": 3705,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PLACE_HOLDER_SQE": 1,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 102.50028,
+          "device_free_during_scope_ms": 42.759,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::fla_control_sync": {
+          "calls": 96,
+          "sum_ms": 307.32681,
+          "device_free_during_scope_ms": 4.923,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 34.2935,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 104,
+        "sum_ms": 292.32671000000005
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.862695125,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 91.10792032812499,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank1",
+      "capture": "rank1_89779_20261126105951111_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1335.3285,
+      "device_free_ms": 706.93125,
+      "device_free_pct": 52.940624722680596,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1546,
+        "EVENT WAIT": 1002,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1916,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PROFILING_DISABLE": 1,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 103.18592,
+          "device_free_during_scope_ms": 44.26325,
+          "device_free_intervals_at_scope_end": 1,
+          "device_free_at_scope_end_ms": 0.0295,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 8,
+        "sum_ms": 7.20155
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.890315890625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 91.038258875,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank1",
+      "capture": "rank1_89779_20261126105953426_ascend_pt",
+      "profile_mode": "sync",
+      "scope_first_to_last_device_compute_ms": 1410.36275,
+      "device_free_ms": 773.401,
+      "device_free_pct": 54.83702685709758,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1527,
+        "EVENT WAIT": 975,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1951,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PLACE_HOLDER_SQE": 1,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 102.85711,
+          "device_free_during_scope_ms": 43.916,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::fla_control_sync": {
+          "calls": 96,
+          "sum_ms": 311.1543,
+          "device_free_during_scope_ms": 4.8885,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 33.36475,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 104,
+        "sum_ms": 296.74223
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.891796015625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 90.977017765625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank2",
+      "capture": "rank2_89780_20261126105951111_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1332.66325,
+      "device_free_ms": 33.256,
+      "device_free_pct": 2.4954541216620174,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1600,
+        "EVENT WAIT": 1144,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 2161,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PROFILING_DISABLE": 1,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 94.48627,
+          "device_free_during_scope_ms": 1.79325,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 8,
+        "sum_ms": 52.38436
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.04391915625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 90.32434467187501,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank2",
+      "capture": "rank2_89780_20261126105953426_ascend_pt",
+      "profile_mode": "sync",
+      "scope_first_to_last_device_compute_ms": 1406.97825,
+      "device_free_ms": 156.8585,
+      "device_free_pct": 11.148608729381566,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1617,
+        "EVENT WAIT": 1132,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 2180,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 94.46125,
+          "device_free_during_scope_ms": 0.216,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::fla_control_sync": {
+          "calls": 96,
+          "sum_ms": 345.59556,
+          "device_free_during_scope_ms": 4.93675,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 32.42075,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 104,
+        "sum_ms": 350.56227
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.24190290625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 90.56580946875,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank3",
+      "capture": "rank3_89781_20261126105951111_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1332.6555,
+      "device_free_ms": 35.864,
+      "device_free_pct": 2.6911681225943234,
+      "task_types": {
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1520,
+        "EVENT WAIT": 1142,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1818,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 96.19381,
+          "device_free_during_scope_ms": 2.48525,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 8,
+        "sum_ms": 48.59154
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 95.7220925625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 90.967757609375,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    },
+    {
+      "rank": "rank3",
+      "capture": "rank3_89781_20261126105953426_ascend_pt",
+      "profile_mode": "sync",
+      "scope_first_to_last_device_compute_ms": 1407.02525,
+      "device_free_ms": 153.618,
+      "device_free_pct": 10.91792773441699,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 6288,
+        "EVENT RECORD": 1514,
+        "EVENT WAIT": 1124,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1851,
+        "AI_CORE": 1339,
+        "MIX_AIV": 192,
+        "MIX_AIC": 181,
+        "AI_CPU": 24,
+        "PROFILING_DISABLE": 1,
+        "PCIE_DMA_SQE": 156,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla": {
+          "calls": 96,
+          "sum_ms": 97.63563,
+          "device_free_during_scope_ms": 0.23775,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::fla_control_sync": {
+          "calls": 96,
+          "sum_ms": 339.67668,
+          "device_free_during_scope_ms": 5.08175,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 32.501,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 104,
+        "sum_ms": 341.44104999999996
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 480,
+          "sum_ms": 96.015418265625,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 96,
+          "sum_ms": 91.19242195312499,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_abs": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_max": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_isfinite": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        },
+        "guard_reduce_all": {
+          "calls": 0,
+          "sum_ms": 0.0,
+          "names": []
+        }
+      }
+    }
+  ],
+  "mega": [
+    {
+      "rank": "rank0",
+      "capture": "rank0_94250_20261126110330093_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1421.023,
+      "device_free_ms": 184.26775,
+      "device_free_pct": 12.96726020620356,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 7048,
+        "EVENT RECORD": 1580,
+        "EVENT WAIT": 1131,
+        "SDMA": 3070,
+        "Write Value": 4182,
+        "Notify Wait": 3763,
+        "AI_CORE": 1339,
+        "MIX_AIV": 480,
+        "MIX_AIC": 189,
+        "AI_CPU": 24,
+        "PCIE_DMA_SQE": 140,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla_retry": {
+          "calls": 8,
+          "sum_ms": 8.23496,
+          "device_free_during_scope_ms": 6.219,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::mega_submit": {
+          "calls": 96,
+          "sum_ms": 84.82226,
+          "device_free_during_scope_ms": 2.90725,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::readback": {
+          "calls": 96,
+          "sum_ms": 314.63756,
+          "device_free_during_scope_ms": 10.9515,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 25.88,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 96
+        },
+        "gdn_probe::validation_submit": {
+          "calls": 96,
+          "sum_ms": 28.65099,
+          "device_free_during_scope_ms": 1.1385,
+          "device_free_intervals_at_scope_end": 5,
+          "device_free_at_scope_end_ms": 1.51175,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 106,
+        "sum_ms": 324.90669
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 40,
+          "sum_ms": 13.8732571875,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 8,
+          "sum_ms": 13.3731671875,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 96,
+          "sum_ms": 39.763894484375,
+          "names": [
+            "aclnnMegaChunkGdn_MegaChunkGdn_MegaChunkGdn"
+          ]
+        },
+        "guard_abs": {
+          "calls": 96,
+          "sum_ms": 0.7176943125,
+          "names": [
+            "aclnnAbs_AbsAiCore_Abs"
+          ]
+        },
+        "guard_reduce_max": {
+          "calls": 96,
+          "sum_ms": 0.972939375,
+          "names": [
+            "aclnnAmax_ReduceMaxAiCore_ReduceMax"
+          ]
+        },
+        "guard_isfinite": {
+          "calls": 192,
+          "sum_ms": 1.869317296875,
+          "names": [
+            "aclnnIsFinite_IsFiniteAiCore_IsFinite"
+          ]
+        },
+        "guard_reduce_all": {
+          "calls": 192,
+          "sum_ms": 1.9192984687499999,
+          "names": [
+            "aclnnAll_ReduceAll_ReduceAll"
+          ]
+        }
+      }
+    },
+    {
+      "rank": "rank1",
+      "capture": "rank1_94251_20261126110330093_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1421.00975,
+      "device_free_ms": 169.41375,
+      "device_free_pct": 11.922068092776986,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 7004,
+        "EVENT RECORD": 1542,
+        "EVENT WAIT": 1130,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 2094,
+        "AI_CORE": 1339,
+        "MIX_AIV": 480,
+        "MIX_AIC": 185,
+        "PLACE_HOLDER_SQE": 2,
+        "AI_CPU": 24,
+        "PROFILING_DISABLE": 1,
+        "PCIE_DMA_SQE": 140,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla_retry": {
+          "calls": 4,
+          "sum_ms": 4.04383,
+          "device_free_during_scope_ms": 3.05925,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::mega_submit": {
+          "calls": 96,
+          "sum_ms": 83.85515,
+          "device_free_during_scope_ms": 0.412,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::readback": {
+          "calls": 96,
+          "sum_ms": 332.3645,
+          "device_free_during_scope_ms": 10.68225,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 24.49775,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 96
+        },
+        "gdn_probe::validation_submit": {
+          "calls": 96,
+          "sum_ms": 27.68967,
+          "device_free_during_scope_ms": 0.31,
+          "device_free_intervals_at_scope_end": 1,
+          "device_free_at_scope_end_ms": 0.31025,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 106,
+        "sum_ms": 343.10868
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 20,
+          "sum_ms": 6.880277421875,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 4,
+          "sum_ms": 6.630732468750001,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 96,
+          "sum_ms": 39.56211053125,
+          "names": [
+            "aclnnMegaChunkGdn_MegaChunkGdn_MegaChunkGdn"
+          ]
+        },
+        "guard_abs": {
+          "calls": 96,
+          "sum_ms": 0.73959475,
+          "names": [
+            "aclnnAbs_AbsAiCore_Abs"
+          ]
+        },
+        "guard_reduce_max": {
+          "calls": 96,
+          "sum_ms": 0.9782395625,
+          "names": [
+            "aclnnAmax_ReduceMaxAiCore_ReduceMax"
+          ]
+        },
+        "guard_isfinite": {
+          "calls": 192,
+          "sum_ms": 1.82001646875,
+          "names": [
+            "aclnnIsFinite_IsFiniteAiCore_IsFinite"
+          ]
+        },
+        "guard_reduce_all": {
+          "calls": 192,
+          "sum_ms": 1.986819703125,
+          "names": [
+            "aclnnAll_ReduceAll_ReduceAll"
+          ]
+        }
+      }
+    },
+    {
+      "rank": "rank2",
+      "capture": "rank2_94252_20261126110330112_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1424.18175,
+      "device_free_ms": 835.826,
+      "device_free_pct": 58.68815549700732,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 7015,
+        "EVENT RECORD": 1574,
+        "EVENT WAIT": 956,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1988,
+        "AI_CORE": 1339,
+        "MIX_AIV": 480,
+        "MIX_AIC": 186,
+        "AI_CPU": 24,
+        "PCIE_DMA_SQE": 140,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla_retry": {
+          "calls": 5,
+          "sum_ms": 5.439760000000001,
+          "device_free_during_scope_ms": 4.1415,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::mega_submit": {
+          "calls": 96,
+          "sum_ms": 90.22715,
+          "device_free_during_scope_ms": 39.898,
+          "device_free_intervals_at_scope_end": 2,
+          "device_free_at_scope_end_ms": 0.10325,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::readback": {
+          "calls": 96,
+          "sum_ms": 276.05356,
+          "device_free_during_scope_ms": 12.23625,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 29.576,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 96
+        },
+        "gdn_probe::validation_submit": {
+          "calls": 96,
+          "sum_ms": 29.03875,
+          "device_free_during_scope_ms": 11.0175,
+          "device_free_intervals_at_scope_end": 47,
+          "device_free_at_scope_end_ms": 15.5875,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 106,
+        "sum_ms": 264.5096
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 25,
+          "sum_ms": 8.523750328124999,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 5,
+          "sum_ms": 8.19526375,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 96,
+          "sum_ms": 39.526829671875,
+          "names": [
+            "aclnnMegaChunkGdn_MegaChunkGdn_MegaChunkGdn"
+          ]
+        },
+        "guard_abs": {
+          "calls": 96,
+          "sum_ms": 0.7084742187499999,
+          "names": [
+            "aclnnAbs_AbsAiCore_Abs"
+          ]
+        },
+        "guard_reduce_max": {
+          "calls": 96,
+          "sum_ms": 0.99491996875,
+          "names": [
+            "aclnnAmax_ReduceMaxAiCore_ReduceMax"
+          ]
+        },
+        "guard_isfinite": {
+          "calls": 192,
+          "sum_ms": 1.803295890625,
+          "names": [
+            "aclnnIsFinite_IsFiniteAiCore_IsFinite"
+          ]
+        },
+        "guard_reduce_all": {
+          "calls": 192,
+          "sum_ms": 1.913478203125,
+          "names": [
+            "aclnnAll_ReduceAll_ReduceAll"
+          ]
+        }
+      }
+    },
+    {
+      "rank": "rank3",
+      "capture": "rank3_94253_20261126110330114_ascend_pt",
+      "profile_mode": "normal",
+      "scope_first_to_last_device_compute_ms": 1423.4355,
+      "device_free_ms": 294.67325,
+      "device_free_pct": 20.70155268714318,
+      "task_types": {
+        "PROFILING_ENABLE": 1,
+        "AI_VECTOR_CORE": 7037,
+        "EVENT RECORD": 1563,
+        "EVENT WAIT": 1122,
+        "SDMA": 3070,
+        "Write Value": 2458,
+        "Notify Wait": 1752,
+        "AI_CORE": 1339,
+        "MIX_AIV": 480,
+        "MIX_AIC": 188,
+        "PLACE_HOLDER_SQE": 1,
+        "AI_CPU": 24,
+        "PROFILING_DISABLE": 1,
+        "PCIE_DMA_SQE": 140,
+        "SDMA_SQE": 271
+      },
+      "host_ranges": {
+        "gdn_probe::fla_retry": {
+          "calls": 7,
+          "sum_ms": 7.82225,
+          "device_free_during_scope_ms": 5.9545,
+          "device_free_intervals_at_scope_end": 0,
+          "device_free_at_scope_end_ms": 0.0,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::mega_submit": {
+          "calls": 96,
+          "sum_ms": 91.1955,
+          "device_free_during_scope_ms": 5.6105,
+          "device_free_intervals_at_scope_end": 1,
+          "device_free_at_scope_end_ms": 4.0775,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        },
+        "gdn_probe::readback": {
+          "calls": 96,
+          "sum_ms": 270.05395,
+          "device_free_during_scope_ms": 11.63975,
+          "device_free_intervals_at_scope_end": 96,
+          "device_free_at_scope_end_ms": 27.02375,
+          "acl_stream_sync_calls_nested": 96,
+          "local_scalar_calls_nested": 96
+        },
+        "gdn_probe::validation_submit": {
+          "calls": 96,
+          "sum_ms": 29.34201,
+          "device_free_during_scope_ms": 3.42175,
+          "device_free_intervals_at_scope_end": 16,
+          "device_free_at_scope_end_ms": 9.081,
+          "acl_stream_sync_calls_nested": 0,
+          "local_scalar_calls_nested": 0
+        }
+      },
+      "stream_sync_total": {
+        "calls": 106,
+        "sum_ms": 257.25327
+      },
+      "device_stages": {
+        "fla_path_tasks": {
+          "calls": 35,
+          "sum_ms": 11.9795193125,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_CastAiCore_Cast",
+            "aclnnChunkGatedDeltaRuleFwd_TransposeAiCore_Transpose",
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "fla_fused_kernel": {
+          "calls": 7,
+          "sum_ms": 11.541070578125,
+          "names": [
+            "aclnnChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd_ChunkGatedDeltaRuleFwd"
+          ]
+        },
+        "mega_main": {
+          "calls": 96,
+          "sum_ms": 39.48242890625,
+          "names": [
+            "aclnnMegaChunkGdn_MegaChunkGdn_MegaChunkGdn"
+          ]
+        },
+        "guard_abs": {
+          "calls": 96,
+          "sum_ms": 0.7611752656249999,
+          "names": [
+            "aclnnAbs_AbsAiCore_Abs"
+          ]
+        },
+        "guard_reduce_max": {
+          "calls": 96,
+          "sum_ms": 0.967379296875,
+          "names": [
+            "aclnnAmax_ReduceMaxAiCore_ReduceMax"
+          ]
+        },
+        "guard_isfinite": {
+          "calls": 192,
+          "sum_ms": 1.921538453125,
+          "names": [
+            "aclnnIsFinite_IsFiniteAiCore_IsFinite"
+          ]
+        },
+        "guard_reduce_all": {
+          "calls": 192,
+          "sum_ms": 2.0088000312500003,
+          "names": [
+            "aclnnAll_ReduceAll_ReduceAll"
+          ]
+        }
+      }
+    }
+  ]
+}

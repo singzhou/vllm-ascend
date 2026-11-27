@@ -1,0 +1,107 @@
+{
+  "config": {
+    "device": 0,
+    "case": [
+      [
+        63,
+        129,
+        257
+      ]
+    ],
+    "dtype": "fp16",
+    "key_heads": 4,
+    "value_heads": 12,
+    "iterations": 8,
+    "seed": 71,
+    "correlated_keys": false,
+    "abs_limit": 0.01,
+    "rmse_limit": 0.05
+  },
+  "results": [
+    {
+      "lengths": [
+        63,
+        129,
+        257
+      ],
+      "timing": {
+        "native": {
+          "median_us": 1357.2287559509277,
+          "samples_us": [
+            1317.9899454116821,
+            1341.194987297058,
+            1349.062442779541,
+            1357.21755027771,
+            1361.8425130844116,
+            1361.8099689483643,
+            1372.3775148391724,
+            1357.2399616241455,
+            1356.719970703125,
+            1389.9500370025635
+          ]
+        },
+        "mega": {
+          "median_us": 1025.2799987792969,
+          "samples_us": [
+            1017.662525177002,
+            1004.3474435806274,
+            1031.862497329712,
+            1017.4025297164917,
+            1024.9899625778198,
+            1025.570034980774,
+            1041.3074493408203,
+            1023.6300230026245,
+            1035.69495677948,
+            1043.0774688720703
+          ]
+        }
+      },
+      "speedup": 1.3237640035569314,
+      "accuracy": {
+        "mega_vs_cpu_fp64": {
+          "output": {
+            "nonfinite": 0,
+            "max_abs": 2.4813919104173243e-05,
+            "relative_rmse": 0.0006285791573395246,
+            "passed": true
+          },
+          "final_state": {
+            "nonfinite": 0,
+            "max_abs": 0.00021494523493470474,
+            "relative_rmse": 0.0004863253905491276,
+            "passed": true
+          }
+        },
+        "native_vs_cpu_fp64": {
+          "output": {
+            "nonfinite": 0,
+            "max_abs": 2.0520189331595107e-05,
+            "relative_rmse": 0.0005540869348137156,
+            "passed": true
+          },
+          "final_state": {
+            "nonfinite": 0,
+            "max_abs": 0.00016740532795744834,
+            "relative_rmse": 0.00041838877235671857,
+            "passed": true
+          }
+        },
+        "mega_vs_native": {
+          "output": {
+            "nonfinite": 0,
+            "max_abs": 3.0517578125e-05,
+            "relative_rmse": 0.0006817700967675127,
+            "passed": true
+          },
+          "final_state": {
+            "nonfinite": 0,
+            "max_abs": 0.0002671778202056885,
+            "relative_rmse": 0.0005585094690272677,
+            "passed": true
+          }
+        }
+      },
+      "passed": true
+    }
+  ]
+}

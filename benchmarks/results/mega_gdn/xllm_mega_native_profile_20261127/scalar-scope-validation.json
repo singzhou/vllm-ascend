@@ -1,0 +1,28 @@
+{
+  "4096": {
+    "count": 192,
+    "nearest_parent": {
+      "aten::_local_scalar_dense::aten::mul_": 96,
+      "aten::item::aten::mul_": 96
+    },
+    "items_with_overlap_sync_or_d2h": 0,
+    "top_sync_scope_names": {
+      "AscendCL@aclrtSynchronizeStream": 6,
+      "AscendCL@aclrtSynchronizeEvent": 5
+    },
+    "max_item_duration_us": 4.5
+  },
+  "12288": {
+    "count": 384,
+    "nearest_parent": {
+      "aten::_local_scalar_dense::aten::mul_": 192,
+      "aten::item::aten::mul_": 192
+    },
+    "items_with_overlap_sync_or_d2h": 0,
+    "top_sync_scope_names": {
+      "AscendCL@aclrtSynchronizeStream": 10,
+      "AscendCL@aclrtSynchronizeEvent": 9
+    },
+    "max_item_duration_us": 5.0
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "unrounded": {
+    "nonfinite": 0,
+    "max_abs": 5.273559366969494e-16,
+    "relative_rmse": 2.277593985166e-15,
+    "passed": true
+  },
+  "npu_kkt": {
+    "nonfinite": 0,
+    "max_abs": 0.0046913239432744835,
+    "relative_rmse": 0.02007994484259429,
+    "passed": true
+  },
+  "npu_inverse": {
+    "nonfinite": 0,
+    "max_abs": 0.004732775855036231,
+    "relative_rmse": 0.020083548980382414,
+    "passed": true
+  },
+  "npu_wy": {
+    "nonfinite": 0,
+    "max_abs": 0.007573020573994116,
+    "relative_rmse": 0.034114376991689475,
+    "passed": true
+  },
+  "npu_wy_bf16_innovation": {
+    "nonfinite": 0,
+    "max_abs": 0.007842411009693892,
+    "relative_rmse": 0.03699536557839592,
+    "passed": true
+  },
+  "actual_mega": {
+    "nonfinite": 0,
+    "max_abs": 0.012978296732884583,
+    "relative_rmse": 0.0563149838238879,
+    "passed": false
+  },
+  "actual_fla": {
+    "nonfinite": 0,
+    "max_abs": 0.007443946225400247,
+    "relative_rmse": 0.02804184009107074,
+    "passed": true
+  }
+}

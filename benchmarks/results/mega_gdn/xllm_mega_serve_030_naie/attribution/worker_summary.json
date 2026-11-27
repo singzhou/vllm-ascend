@@ -1,0 +1,777 @@
+{
+  "baseline": {
+    "128_c16/normal": {
+      "n_requests": 96,
+      "ttft_p50_ms": 532.1423749992391,
+      "worker_calls": 2688,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          128,
+          1
+        ],
+        [
+          256,
+          2
+        ],
+        [
+          384,
+          3
+        ],
+        [
+          640,
+          5
+        ],
+        [
+          896,
+          7
+        ],
+        [
+          1024,
+          8
+        ],
+        [
+          1280,
+          10
+        ],
+        [
+          1536,
+          12
+        ],
+        [
+          2048,
+          16
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 138.687485,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "128_c16/sync": {
+      "n_requests": 96,
+      "ttft_p50_ms": 564.0800499968464,
+      "worker_calls": 2688,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          128,
+          1
+        ],
+        [
+          256,
+          2
+        ],
+        [
+          896,
+          7
+        ],
+        [
+          1024,
+          8
+        ],
+        [
+          1664,
+          13
+        ],
+        [
+          1792,
+          14
+        ],
+        [
+          2048,
+          16
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 115.755645,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 132.7855
+    },
+    "512_c1/sync": {
+      "n_requests": 6,
+      "ttft_p50_ms": 286.04748000361724,
+      "worker_calls": 1152,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          512,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 45.89618,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 38.66191
+    },
+    "512_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 272.5161400012439,
+      "worker_calls": 1152,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          512,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 45.971195,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "2048_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 509.83344500127714,
+      "worker_calls": 1152,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          2048,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 46.82249,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "2048_c1/sync": {
+      "n_requests": 6,
+      "ttft_p50_ms": 374.677600004361,
+      "worker_calls": 1152,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          2048,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 47.089515,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 113.51305500000001
+    },
+    "2048_c4/sync": {
+      "n_requests": 24,
+      "ttft_p50_ms": 1403.9300900039962,
+      "worker_calls": 3840,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          40,
+          1
+        ],
+        [
+          44,
+          1
+        ],
+        [
+          2048,
+          1
+        ],
+        [
+          4056,
+          2
+        ],
+        [
+          4064,
+          3
+        ],
+        [
+          4084,
+          2
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 140.18081999999998,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 670.42035
+    },
+    "2048_c4/normal": {
+      "n_requests": 24,
+      "ttft_p50_ms": 1296.0095300004468,
+      "worker_calls": 3840,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          40,
+          1
+        ],
+        [
+          44,
+          1
+        ],
+        [
+          2048,
+          1
+        ],
+        [
+          2074,
+          2
+        ],
+        [
+          4056,
+          2
+        ],
+        [
+          4064,
+          3
+        ],
+        [
+          4070,
+          2
+        ],
+        [
+          4084,
+          2
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 140.251885,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "4096_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 811.9908449953073,
+      "worker_calls": 2304,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          6,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 92.8674,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "4096_c1/sync": {
+      "n_requests": 6,
+      "ttft_p50_ms": 867.6288900023792,
+      "worker_calls": 2304,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          6,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 92.74682,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 370.819515
+    },
+    "8192_c1/sync": {
+      "n_requests": 6,
+      "ttft_p50_ms": 1681.089104997227,
+      "worker_calls": 3456,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          12,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 140.964385,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 723.64066
+    },
+    "8192_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 1560.3991200041492,
+      "worker_calls": 3456,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          12,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 140.266695,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "mixed_c4/normal": {
+      "n_requests": 24,
+      "ttft_p50_ms": 1118.9512249984546,
+      "worker_calls": 4416,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          162,
+          2
+        ],
+        [
+          168,
+          1
+        ],
+        [
+          512,
+          1
+        ],
+        [
+          2048,
+          1
+        ],
+        [
+          2202,
+          2
+        ],
+        [
+          4056,
+          2
+        ],
+        [
+          4062,
+          1
+        ],
+        [
+          4070,
+          2
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 185.108845,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "mixed_c4/sync": {
+      "n_requests": 24,
+      "ttft_p50_ms": 1120.5958200007444,
+      "worker_calls": 4032,
+      "mega_calls_rank_p50": 0.0,
+      "mega_attempts_all_ranks": 0,
+      "fallbacks_all_ranks": 0,
+      "fallback_pct_local": null,
+      "fallback_pct_any_rank": null,
+      "scheduled_shapes": [
+        [
+          162,
+          2
+        ],
+        [
+          168,
+          1
+        ],
+        [
+          512,
+          1
+        ],
+        [
+          2048,
+          1
+        ],
+        [
+          2208,
+          1
+        ],
+        [
+          2706,
+          2
+        ],
+        [
+          4056,
+          2
+        ],
+        [
+          4062,
+          1
+        ],
+        [
+          4064,
+          3
+        ],
+        [
+          4078,
+          3
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 0.0,
+      "mega_submit_max_rank_ms_p50": 0.0,
+      "validation_submit_max_rank_ms_p50": 0.0,
+      "readback_max_rank_ms_p50": 0.0,
+      "fla_submit_max_rank_ms_p50": 184.24451,
+      "retry_submit_max_rank_ms_p50": 0.0,
+      "control_sync_max_rank_ms_p50": 477.97220500000003
+    }
+  },
+  "mega": {
+    "128_c16/normal": {
+      "n_requests": 96,
+      "ttft_p50_ms": 606.142099997669,
+      "worker_calls": 2731,
+      "mega_calls_rank_p50": 120.0,
+      "mega_attempts_all_ranks": 2496,
+      "fallbacks_all_ranks": 235,
+      "fallback_pct_local": 9.415064102564102,
+      "fallback_pct_any_rank": 24.03846153846154,
+      "scheduled_shapes": [
+        [
+          128,
+          1
+        ],
+        [
+          256,
+          2
+        ],
+        [
+          384,
+          3
+        ],
+        [
+          640,
+          5
+        ],
+        [
+          768,
+          6
+        ],
+        [
+          1152,
+          9
+        ],
+        [
+          1280,
+          10
+        ],
+        [
+          1408,
+          11
+        ],
+        [
+          1664,
+          13
+        ],
+        [
+          2048,
+          16
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 254.352805,
+      "mega_submit_max_rank_ms_p50": 103.475,
+      "validation_submit_max_rank_ms_p50": 35.511025000000004,
+      "readback_max_rank_ms_p50": 127.358575,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 14.170584999999999,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "512_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 314.6136649957043,
+      "worker_calls": 1263,
+      "mega_calls_rank_p50": 48.0,
+      "mega_attempts_all_ranks": 1152,
+      "fallbacks_all_ranks": 111,
+      "fallback_pct_local": 9.635416666666666,
+      "fallback_pct_any_rank": 26.38888888888889,
+      "scheduled_shapes": [
+        [
+          512,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 92.15895499999999,
+      "mega_submit_max_rank_ms_p50": 40.262095,
+      "validation_submit_max_rank_ms_p50": 13.52915,
+      "readback_max_rank_ms_p50": 43.11589,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 5.99503,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "2048_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 497.30790999456076,
+      "worker_calls": 1285,
+      "mega_calls_rank_p50": 48.0,
+      "mega_attempts_all_ranks": 1152,
+      "fallbacks_all_ranks": 133,
+      "fallback_pct_local": 11.54513888888889,
+      "fallback_pct_any_rank": 30.555555555555557,
+      "scheduled_shapes": [
+        [
+          2048,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 160.49855000000002,
+      "mega_submit_max_rank_ms_p50": 42.277175,
+      "validation_submit_max_rank_ms_p50": 14.00133,
+      "readback_max_rank_ms_p50": 110.535855,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 6.253105,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "2048_c4/normal": {
+      "n_requests": 24,
+      "ttft_p50_ms": 1416.8845649983268,
+      "worker_calls": 4234,
+      "mega_calls_rank_p50": 144.0,
+      "mega_attempts_all_ranks": 3840,
+      "fallbacks_all_ranks": 394,
+      "fallback_pct_local": 10.260416666666666,
+      "fallback_pct_any_rank": 27.083333333333332,
+      "scheduled_shapes": [
+        [
+          40,
+          1
+        ],
+        [
+          44,
+          1
+        ],
+        [
+          2048,
+          1
+        ],
+        [
+          2074,
+          2
+        ],
+        [
+          4056,
+          2
+        ],
+        [
+          4064,
+          3
+        ],
+        [
+          4070,
+          2
+        ],
+        [
+          4084,
+          2
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 757.6825249999999,
+      "mega_submit_max_rank_ms_p50": 136.2095,
+      "validation_submit_max_rank_ms_p50": 48.390615,
+      "readback_max_rank_ms_p50": 582.652525,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 18.80317,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "4096_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 1032.821344997501,
+      "worker_calls": 2445,
+      "mega_calls_rank_p50": 96.0,
+      "mega_attempts_all_ranks": 2304,
+      "fallbacks_all_ranks": 141,
+      "fallback_pct_local": 6.119791666666667,
+      "fallback_pct_any_rank": 16.666666666666668,
+      "scheduled_shapes": [
+        [
+          6,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 481.94828,
+      "mega_submit_max_rank_ms_p50": 89.8195,
+      "validation_submit_max_rank_ms_p50": 32.053715,
+      "readback_max_rank_ms_p50": 382.08787,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 7.130675,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "8192_c1/normal": {
+      "n_requests": 6,
+      "ttft_p50_ms": 1727.5457300056587,
+      "worker_calls": 3685,
+      "mega_calls_rank_p50": 144.0,
+      "mega_attempts_all_ranks": 3456,
+      "fallbacks_all_ranks": 229,
+      "fallback_pct_local": 6.626157407407407,
+      "fallback_pct_any_rank": 19.560185185185187,
+      "scheduled_shapes": [
+        [
+          12,
+          1
+        ],
+        [
+          4090,
+          1
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 855.749335,
+      "mega_submit_max_rank_ms_p50": 135.32511,
+      "validation_submit_max_rank_ms_p50": 47.41066,
+      "readback_max_rank_ms_p50": 705.295625,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 10.92717,
+      "control_sync_max_rank_ms_p50": 0.0
+    },
+    "mixed_c4/normal": {
+      "n_requests": 24,
+      "ttft_p50_ms": 828.4690700020292,
+      "worker_calls": 4259,
+      "mega_calls_rank_p50": 192.0,
+      "mega_attempts_all_ranks": 3840,
+      "fallbacks_all_ranks": 419,
+      "fallback_pct_local": 10.911458333333334,
+      "fallback_pct_any_rank": 29.0625,
+      "scheduled_shapes": [
+        [
+          48,
+          1
+        ],
+        [
+          128,
+          1
+        ],
+        [
+          512,
+          1
+        ],
+        [
+          2082,
+          2
+        ],
+        [
+          2176,
+          2
+        ],
+        [
+          2706,
+          2
+        ],
+        [
+          4048,
+          1
+        ],
+        [
+          4062,
+          1
+        ],
+        [
+          4078,
+          3
+        ]
+      ],
+      "mega_elapsed_max_rank_ms_p50": 649.767795,
+      "mega_submit_max_rank_ms_p50": 162.042205,
+      "validation_submit_max_rank_ms_p50": 55.264005,
+      "readback_max_rank_ms_p50": 458.43066,
+      "fla_submit_max_rank_ms_p50": 0.0,
+      "retry_submit_max_rank_ms_p50": 21.50384,
+      "control_sync_max_rank_ms_p50": 0.0
+    }
+  }
+}

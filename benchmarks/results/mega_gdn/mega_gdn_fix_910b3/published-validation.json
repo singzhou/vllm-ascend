@@ -1,0 +1,838 @@
+{
+  "cases": [
+    {
+      "case": "capture-64",
+      "lengths": [
+        64
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0002705913929910604,
+          "relative_rmse": 0.005833165442827512,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.004499397583495594,
+          "relative_rmse": 0.003822240699418632,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0003662109375,
+          "relative_rmse": 0.007393516851688922,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.005671381950378418,
+          "relative_rmse": 0.005184162104217073,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00017451850924340984,
+          "relative_rmse": 0.004587692282475182,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.004328335558039291,
+          "relative_rmse": 0.0035397680917615094,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "capture-127",
+      "lengths": [
+        127
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006595767562496968,
+          "relative_rmse": 0.010773447948920541,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.011262179462776356,
+          "relative_rmse": 0.006750535184935602,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006103515625,
+          "relative_rmse": 0.011331104003543724,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.011208534240722656,
+          "relative_rmse": 0.007299315627758076,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00023125525433531613,
+          "relative_rmse": 0.004603027856027121,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0022630299662532716,
+          "relative_rmse": 0.002804893571534385,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "capture-128",
+      "lengths": [
+        128
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006595767562496968,
+          "relative_rmse": 0.010791955936370555,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.009136162261822067,
+          "relative_rmse": 0.005702761373834802,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006103515625,
+          "relative_rmse": 0.011347841780752281,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.008926957845687866,
+          "relative_rmse": 0.00634590896489931,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00023125525433531613,
+          "relative_rmse": 0.004608208329517973,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0022636905308784927,
+          "relative_rmse": 0.0027992822114869483,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {
+        "mega": {
+          "median_us": 143.0068016052246,
+          "samples_us": [
+            141.20559692382812,
+            144.28239822387695,
+            141.9863986968994,
+            144.50559616088867,
+            144.0272045135498,
+            141.81280136108398,
+            141.03679656982422,
+            151.89200401306152
+          ]
+        },
+        "fla": {
+          "median_us": 220.19519805908203,
+          "samples_us": [
+            220.6096076965332,
+            226.31120681762695,
+            220.4439926147461,
+            219.79520797729492,
+            219.73920822143555,
+            220.023193359375,
+            220.1576042175293,
+            220.23279190063477
+          ]
+        }
+      }
+    },
+    {
+      "case": "capture-129",
+      "lengths": [
+        129
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006595767562496968,
+          "relative_rmse": 0.010751493298842337,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0014981672879315067,
+          "relative_rmse": 0.0032495323089862457,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006103515625,
+          "relative_rmse": 0.011306640308407312,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0017182976007461548,
+          "relative_rmse": 0.0038021960948161023,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00023125525433531613,
+          "relative_rmse": 0.004592888143022864,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.002263729345426624,
+          "relative_rmse": 0.0023760321089345833,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "capture-512",
+      "lengths": [
+        512
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006595767562496968,
+          "relative_rmse": 0.009679374557088831,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.003245892009871458,
+          "relative_rmse": 0.005017766268386217,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.000732421875,
+          "relative_rmse": 0.010673933384023183,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.004537690430879593,
+          "relative_rmse": 0.005683856995791925,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0002385126220216002,
+          "relative_rmse": 0.004940566266900259,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0026455165819154296,
+          "relative_rmse": 0.002793537150818748,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {
+        "mega": {
+          "median_us": 242.97359466552734,
+          "samples_us": [
+            241.62080764770508,
+            243.42079162597656,
+            242.3151969909668,
+            243.18880081176758,
+            243.03279876708984,
+            242.97279357910156,
+            242.97439575195312,
+            242.84639358520508
+          ]
+        },
+        "fla": {
+          "median_us": 363.82678985595703,
+          "samples_us": [
+            363.7807846069336,
+            363.3599853515625,
+            363.87279510498047,
+            363.6479949951172,
+            364.41680908203125,
+            364.53678131103516,
+            363.96961212158203,
+            363.21441650390625
+          ]
+        }
+      }
+    },
+    {
+      "case": "capture-896",
+      "lengths": [
+        896
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0007422311388965708,
+          "relative_rmse": 0.009552109740016133,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0032218439562365295,
+          "relative_rmse": 0.00468895396460008,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.000732421875,
+          "relative_rmse": 0.0105689052187894,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.003512568771839142,
+          "relative_rmse": 0.005074601957201092,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00028023057609028595,
+          "relative_rmse": 0.0050021410314436705,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0020332618924013557,
+          "relative_rmse": 0.0025684320900857863,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "capture-1024",
+      "lengths": [
+        1024
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0011158962446555232,
+          "relative_rmse": 0.010249278801432999,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0214183320042603,
+          "relative_rmse": 0.009054110951415097,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.001220703125,
+          "relative_rmse": 0.011202167052812675,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.02104717493057251,
+          "relative_rmse": 0.009473812531787527,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00028023057609028595,
+          "relative_rmse": 0.004949672644350207,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0025315625316811308,
+          "relative_rmse": 0.002744814704505227,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "capture-2048",
+      "lengths": [
+        2048
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0014476494728055886,
+          "relative_rmse": 0.010825513244456188,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.002209420170500631,
+          "relative_rmse": 0.004036628400832057,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0015869140625,
+          "relative_rmse": 0.011809854636166928,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.003551006317138672,
+          "relative_rmse": 0.004870342587867693,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.000312702680507846,
+          "relative_rmse": 0.004949747881149391,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0013415861466380408,
+          "relative_rmse": 0.002731010846060094,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00193023681640625,
+        "max_abs_residual": 0.00193023681640625,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {
+        "mega": {
+          "median_us": 505.95279693603516,
+          "samples_us": [
+            505.2104187011719,
+            506.8783950805664,
+            505.3976058959961,
+            506.14479064941406,
+            505.84239959716797,
+            506.1880111694336,
+            505.61920166015625,
+            506.06319427490234
+          ]
+        },
+        "fla": {
+          "median_us": 931.1564254760742,
+          "samples_us": [
+            931.2496185302734,
+            930.4496002197266,
+            930.94482421875,
+            930.3031921386719,
+            931.6591644287109,
+            931.5424346923828,
+            931.8840026855469,
+            931.063232421875
+          ]
+        }
+      }
+    },
+    {
+      "case": "correlated-bf16-2048",
+      "lengths": [
+        2048
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0009824714310648804,
+          "relative_rmse": 0.04812624317639873,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.012978296732884583,
+          "relative_rmse": 0.0563149838238879,
+          "passed": false
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00146484375,
+          "relative_rmse": 0.05240557376048736,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.015352286398410797,
+          "relative_rmse": 0.06084343595676476,
+          "passed": false
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0007618765043940689,
+          "relative_rmse": 0.02317441058074915,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.007443946225400247,
+          "relative_rmse": 0.02804184009107074,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.0005921590705032322,
+        "max_abs_residual": 0.0005856361240148544,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "correlated-bf16-varlen",
+      "lengths": [
+        23,
+        129,
+        387
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 8,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0007738359642543245,
+          "relative_rmse": 0.03329850324802748,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.007123356811783811,
+          "relative_rmse": 0.026019697630567502,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00091552734375,
+          "relative_rmse": 0.038188347933621636,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.00712837278842926,
+          "relative_rmse": 0.027348196958272973,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006051839292141319,
+          "relative_rmse": 0.020722771402208382,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.004234697460164583,
+          "relative_rmse": 0.01019249276716152,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00037817125877529466,
+        "max_abs_residual": 0.0003865329781547189,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {
+        "mega": {
+          "median_us": 221.89519882202148,
+          "samples_us": [
+            221.60320281982422,
+            222.2327995300293,
+            222.16800689697266,
+            221.95999145507812,
+            221.59360885620117,
+            221.83040618896484,
+            220.84800720214844,
+            222.8384017944336
+          ]
+        },
+        "fla": {
+          "median_us": 507.83960342407227,
+          "samples_us": [
+            507.94559478759766,
+            507.54478454589844,
+            507.7048110961914,
+            507.6839828491211,
+            509.01039123535156,
+            508.03680419921875,
+            509.36798095703125,
+            507.7336120605469
+          ]
+        }
+      }
+    },
+    {
+      "case": "correlated-bf16-tails",
+      "lengths": [
+        15,
+        16,
+        17,
+        127,
+        128,
+        129
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 2,
+      "value_heads": 6,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0006684097236442808,
+          "relative_rmse": 0.02576637636355723,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.012107898845787758,
+          "relative_rmse": 0.025200348794072416,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00079345703125,
+          "relative_rmse": 0.0317858361389905,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.014868505299091339,
+          "relative_rmse": 0.03030629138644845,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0005981176075890741,
+          "relative_rmse": 0.019577187743819155,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.006914061712112824,
+          "relative_rmse": 0.017924894792136825,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.00038936009722112736,
+        "max_abs_residual": 0.00046259909868240356,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "random-bf16-varlen",
+      "lengths": [
+        31,
+        61,
+        199
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 2,
+      "value_heads": 6,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.00015005334207410237,
+          "relative_rmse": 0.004256902799229201,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.001223809047108504,
+          "relative_rmse": 0.003573893157883451,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 0.000244140625,
+          "relative_rmse": 0.005228329189180722,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0019639432430267334,
+          "relative_rmse": 0.004548426612701911,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.0001311311651492654,
+          "relative_rmse": 0.003733258818195723,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.001046114683400129,
+          "relative_rmse": 0.0028985844672214365,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 0.000550173464003878,
+        "max_abs_residual": 0.0005501508712768555,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    },
+    {
+      "case": "random-fp16-varlen",
+      "lengths": [
+        127,
+        128,
+        129
+      ],
+      "dtype": "torch.float16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 1.9470801865980464e-05,
+          "relative_rmse": 0.0005450431163275825,
+          "passed": true
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.00018642654953937576,
+          "relative_rmse": 0.0003934481305884827,
+          "passed": true
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 0,
+          "max_abs": 2.288818359375e-05,
+          "relative_rmse": 0.0006779980036901774,
+          "passed": true
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 0,
+          "max_abs": 0.00027239322662353516,
+          "relative_rmse": 0.0005304738724056611,
+          "passed": true
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 2.163389646487983e-05,
+          "relative_rmse": 0.000470410312160205,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0001682143883722509,
+          "relative_rmse": 0.00036557295019982165,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 9.488903468771182e-05,
+        "max_abs_residual": 9.363610297441483e-05,
+        "max_abs_inverse_entry": 1.0,
+        "head_chunks_above_two": 0
+      },
+      "timing": {}
+    }
+  ]
+}

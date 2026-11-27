@@ -1,0 +1,1074 @@
+{
+  "repeat_bit_equal": {
+    "output": true,
+    "inverse": true,
+    "w": true,
+    "u": true,
+    "history": true,
+    "innovation": true,
+    "state": true
+  },
+  "actual_mega": {
+    "nonfinite": 0,
+    "max_abs": 0.012978296732884583,
+    "relative_rmse": 0.0563149838238879,
+    "passed": false
+  },
+  "fla": {
+    "nonfinite": 0,
+    "max_abs": 0.007443946225400247,
+    "relative_rmse": 0.02804184009107074,
+    "passed": true
+  },
+  "actual_mega_error_plane": {
+    "parallel_relative": 0.03703393451156613,
+    "orthogonal_relative": 0.042424817002289894,
+    "orthogonal_error_fraction": 0.7533486493570469
+  },
+  "precision_ablations": {
+    "full_model": {
+      "nonfinite": 0,
+      "max_abs": 0.012978296732884583,
+      "relative_rmse": 0.056315725649000836,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03703426508461459,
+        "orthogonal_relative": 0.04242551313792238,
+        "orthogonal_error_fraction": 0.7533510870897409
+      }
+    },
+    "fp32_state_input": {
+      "nonfinite": 0,
+      "max_abs": 0.012978296732884583,
+      "relative_rmse": 0.05636641218162277,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03709480186587053,
+        "orthogonal_relative": 0.04243993516442303,
+        "orthogonal_error_fraction": 0.752929511065453
+      }
+    },
+    "fp32_ws": {
+      "nonfinite": 0,
+      "max_abs": 0.013372412886968638,
+      "relative_rmse": 0.05637135590438141,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03712474906823568,
+        "orthogonal_relative": 0.042420310855991704,
+        "orthogonal_error_fraction": 0.7525153542154666
+      }
+    },
+    "fp32_decayed_key": {
+      "nonfinite": 0,
+      "max_abs": 0.008675604649276913,
+      "relative_rmse": 0.03725985154680831,
+      "passed": true,
+      "error_plane": {
+        "parallel_relative": 0.03704054058776633,
+        "orthogonal_relative": 0.0040366929851352994,
+        "orthogonal_error_fraction": 0.10833894440143263
+      }
+    },
+    "fp32_innovation": {
+      "nonfinite": 0,
+      "max_abs": 0.012856226420384583,
+      "relative_rmse": 0.054634943305721224,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.034407153788972446,
+        "orthogonal_relative": 0.04243966067443739,
+        "orthogonal_error_fraction": 0.776786029354097
+      }
+    },
+    "fp32_kv": {
+      "nonfinite": 0,
+      "max_abs": 0.012917261576634583,
+      "relative_rmse": 0.05625051849088484,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03709602883464558,
+        "orthogonal_relative": 0.04228481376561224,
+        "orthogonal_error_fraction": 0.7517230934051624
+      }
+    },
+    "fp32_state_output": {
+      "nonfinite": 0,
+      "max_abs": 0.012987632310372529,
+      "relative_rmse": 0.05630254677751268,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03705107554453968,
+        "orthogonal_relative": 0.04239333172359522,
+        "orthogonal_error_fraction": 0.7529558456941272
+      }
+    },
+    "fp32_ws_and_kv": {
+      "nonfinite": 0,
+      "max_abs": 0.012917261576634583,
+      "relative_rmse": 0.056306899683692783,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.03719491886646264,
+        "orthogonal_relative": 0.042272981471699965,
+        "orthogonal_error_fraction": 0.7507602391389128
+      }
+    },
+    "fp32_recurrence_with_npu_wy": {
+      "nonfinite": 0,
+      "max_abs": 0.007572841594474022,
+      "relative_rmse": 0.034114357365922596,
+      "passed": true,
+      "error_plane": {
+        "parallel_relative": 0.034114357355126704,
+        "orthogonal_relative": 8.582477232567664e-07,
+        "orthogonal_error_fraction": 2.515796249804443e-05
+      }
+    },
+    "actual_innovation": {
+      "nonfinite": 0,
+      "max_abs": 0.012978296732884583,
+      "relative_rmse": 0.05631523374123841,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.037033932563559,
+        "orthogonal_relative": 0.04242515044414197,
+        "orthogonal_error_fraction": 0.7533512271134366
+      }
+    },
+    "fp32_wy_with_npu_inverse": {
+      "nonfinite": 0,
+      "max_abs": 0.012643043498766299,
+      "relative_rmse": 0.0524516676015753,
+      "passed": false,
+      "error_plane": {
+        "parallel_relative": 0.030814575596010838,
+        "orthogonal_relative": 0.04244572257629548,
+        "orthogonal_error_fraction": 0.8092349493769136
+      }
+    },
+    "fp32_recurrence_and_wy_with_npu_inverse": {
+      "nonfinite": 0,
+      "max_abs": 0.004732761010505737,
+      "relative_rmse": 0.020083520241066105,
+      "passed": true,
+      "error_plane": {
+        "parallel_relative": 0.0200835202226047,
+        "orthogonal_relative": 8.61127445176811e-07,
+        "orthogonal_error_fraction": 4.287731607011836e-05
+      }
+    }
+  },
+  "chunks": [
+    {
+      "tokens": 128,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.009185644915792837,
+        "relative_rmse": 0.04037882876078932,
+        "passed": true
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 6.103515625e-05,
+        "relative_rmse": 7.14908228565396e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999644160270691
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 7.797550457040674e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9928334355354309
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.001953125,
+        "relative_rmse": 1.2857958187520152e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9999898076057434
+      },
+      "reference_state_norm": 9.658941689959452
+    },
+    {
+      "tokens": 256,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012194098772054915,
+        "relative_rmse": 0.04633995800374133,
+        "passed": true
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 7.512624791401003e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9935709834098816
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 6.446007456681894e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.999969482421875
+      },
+      "reference_state_norm": 10.002292197162465
+    },
+    {
+      "tokens": 384,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012757787523266916,
+        "relative_rmse": 0.050821742109094625,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 2.87046621462533e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9999745488166809
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.797686428537832e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.993316650390625
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 1.52587890625e-05,
+        "relative_rmse": 1.1269631858845211e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.9999847412109375
+      },
+      "reference_state_norm": 9.584041924223353
+    },
+    {
+      "tokens": 512,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.01132063915991325,
+        "relative_rmse": 0.05262575136734013,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 0.00010286935698192115,
+        "passed": true,
+        "bit_equal_fraction": 0.9995982050895691
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 7.125102042345351e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.992156982421875
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 6.419716791435887e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999592900276184
+      },
+      "reference_state_norm": 9.620789545650862
+    },
+    {
+      "tokens": 640,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.01360955748086766,
+        "relative_rmse": 0.053568967061822896,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 8.959754032968313e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9996134638786316
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.63526724330489e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9927622675895691
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 7.4086112544170325e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999491572380066
+      },
+      "reference_state_norm": 9.767230153324228
+    },
+    {
+      "tokens": 768,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.01154915819914698,
+        "relative_rmse": 0.05599154911366739,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 9.237141842840973e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9995880126953125
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 7.208778187534585e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9919230341911316
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 6.808515226595127e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999745488166809
+      },
+      "reference_state_norm": 9.374181611104047
+    },
+    {
+      "tokens": 896,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.013800097983485901,
+        "relative_rmse": 0.05436158949502578,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 7.248068164636194e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9996337890625
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 7.381105323121572e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9935200810432434
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0078125,
+        "relative_rmse": 5.2900483107394934e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9999592900276184
+      },
+      "reference_state_norm": 9.810353593369845
+    },
+    {
+      "tokens": 1024,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012337635607124392,
+        "relative_rmse": 0.05388116702550502,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 7.481829726108996e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9996439814567566
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 7.343825984400762e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9922282099723816
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 6.103515625e-05,
+        "relative_rmse": 4.0694269303250144e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.9999644160270691
+      },
+      "reference_state_norm": 9.852684513248096
+    },
+    {
+      "tokens": 1152,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.015052040061754743,
+        "relative_rmse": 0.05728350975714681,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0001220703125,
+        "relative_rmse": 6.654014166583466e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9993743896484375
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.8277701797296685e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9920654296875
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 5.024042674487115e-08,
+        "passed": true,
+        "bit_equal_fraction": 0.9999949336051941
+      },
+      "reference_state_norm": 9.377243707121393
+    },
+    {
+      "tokens": 1280,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.015034531564083534,
+        "relative_rmse": 0.05605402150884288,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 5.542362599235654e-05,
+        "passed": true,
+        "bit_equal_fraction": 0.9994659423828125
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 7.488228394308931e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9915415644645691
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 6.870592423604067e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999745488166809
+      },
+      "reference_state_norm": 9.679806150655175
+    },
+    {
+      "tokens": 1408,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.013709564850639136,
+        "relative_rmse": 0.05568036801505688,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.000244140625,
+        "relative_rmse": 0.00010712599150537605,
+        "passed": true,
+        "bit_equal_fraction": 0.99884033203125
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 7.079717468671748e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9927724003791809
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.0001220703125,
+        "relative_rmse": 8.009213526282748e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.999969482421875
+      },
+      "reference_state_norm": 9.660003185080425
+    },
+    {
+      "tokens": 1536,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.018369921832430695,
+        "relative_rmse": 0.05734733745401841,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.00048828125,
+        "relative_rmse": 0.0001652874850924278,
+        "passed": true,
+        "bit_equal_fraction": 0.9990895390510559
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 7.631395926113482e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9913432002067566
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 6.103515625e-05,
+        "relative_rmse": 4.0203106122316247e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.9999796748161316
+      },
+      "reference_state_norm": 9.705706220517778
+    },
+    {
+      "tokens": 1664,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012250444867275927,
+        "relative_rmse": 0.05526223371864547,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.00048828125,
+        "relative_rmse": 0.0001563398870507058,
+        "passed": true,
+        "bit_equal_fraction": 0.9992625117301941
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.443611452266778e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9930623173713684
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.00048828125,
+        "relative_rmse": 3.220039178113176e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.999969482421875
+      },
+      "reference_state_norm": 9.618189580331709
+    },
+    {
+      "tokens": 1792,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.013811505745519028,
+        "relative_rmse": 0.056604263485040024,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.00048828125,
+        "relative_rmse": 0.0001186334068200089,
+        "passed": true,
+        "bit_equal_fraction": 0.9993693232536316
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 7.62939453125e-06,
+        "relative_rmse": 8.615315953807831e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9915008544921875
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 0.00048828125,
+        "relative_rmse": 3.213815259557367e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9999644160270691
+      },
+      "reference_state_norm": 9.611436373079034
+    },
+    {
+      "tokens": 1920,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.013484129975986643,
+        "relative_rmse": 0.05557465319871797,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0009765625,
+        "relative_rmse": 0.00029876602489581344,
+        "passed": true,
+        "bit_equal_fraction": 0.9992268681526184
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.950778340244843e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9925689697265625
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 6.103515625e-05,
+        "relative_rmse": 4.7099940274823367e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.999969482421875
+      },
+      "reference_state_norm": 9.651608523029298
+    },
+    {
+      "tokens": 2048,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012978296732884583,
+        "relative_rmse": 0.0563149838238879,
+        "passed": false
+      },
+      "model_vs_mega_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0008544921875,
+        "relative_rmse": 0.00022409192955345162,
+        "passed": true,
+        "bit_equal_fraction": 0.9990081787109375
+      },
+      "model_vs_mega_innovation_with_hardware_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "reconstructed_w_vs_mega_w": {
+        "nonfinite": 0,
+        "max_abs": 3.814697265625e-06,
+        "relative_rmse": 6.34976892890449e-06,
+        "passed": true,
+        "bit_equal_fraction": 0.9938252568244934
+      },
+      "reconstructed_u_vs_mega_u": {
+        "nonfinite": 0,
+        "max_abs": 3.0517578125e-05,
+        "relative_rmse": 2.8846832979336474e-07,
+        "passed": true,
+        "bit_equal_fraction": 0.9999644160270691
+      },
+      "reference_state_norm": 9.837782879849522
+    }
+  ],
+  "prefix_agreement": [
+    {
+      "tokens": 128,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.009185644915792837,
+        "relative_rmse": 0.04037882876078932,
+        "passed": true
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.007332754707894774,
+        "relative_rmse": 0.02881757130179021,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 256,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012194098772054915,
+        "relative_rmse": 0.04633995800374133,
+        "passed": true
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0069463633810914055,
+        "relative_rmse": 0.027658599371988397,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 384,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012757787523266916,
+        "relative_rmse": 0.050821742109094625,
+        "passed": false
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.008066251853345068,
+        "relative_rmse": 0.028453116640923183,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 512,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.01132063915991325,
+        "relative_rmse": 0.05262575136734013,
+        "passed": false
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.006665655726656741,
+        "relative_rmse": 0.028934633695835026,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 1024,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012337635607124392,
+        "relative_rmse": 0.05388116702550502,
+        "passed": false
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.00676247051850655,
+        "relative_rmse": 0.028612898194766517,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 1536,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.018369921832430695,
+        "relative_rmse": 0.05734733745401841,
+        "passed": false
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.006098865643051416,
+        "relative_rmse": 0.028007034200451808,
+        "passed": true
+      }
+    },
+    {
+      "tokens": 1920,
+      "prefix_state_vs_full_run_history": {
+        "nonfinite": 0,
+        "max_abs": 0.0,
+        "relative_rmse": 0.0,
+        "passed": true,
+        "bit_equal_fraction": 1.0
+      },
+      "prefix_mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.013484129975986643,
+        "relative_rmse": 0.05557465319871797,
+        "passed": false
+      },
+      "prefix_fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.00722477478020965,
+        "relative_rmse": 0.02910814352872598,
+        "passed": true
+      }
+    }
+  ],
+  "controls": {
+    "same_key": {
+      "mean_adjacent_key_cosine": 1.0,
+      "key_gate_log_mean": -0.0015017598634585738,
+      "beta_mean": 0.9801090359687805,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.012978296732884583,
+        "relative_rmse": 0.0563149838238879,
+        "passed": false
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.015352286398410797,
+        "relative_rmse": 0.06084343595676476,
+        "passed": false
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.007443946225400247,
+        "relative_rmse": 0.02804184009107074,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    },
+    "key_noise_0.03": {
+      "mean_adjacent_key_cosine": 0.9991047978401184,
+      "key_gate_log_mean": -0.0015017598634585738,
+      "beta_mean": 0.9801090359687805,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.014155694765443596,
+        "relative_rmse": 0.04639902333758306,
+        "passed": true
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.014187194406986237,
+        "relative_rmse": 0.05180724928318434,
+        "passed": false
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.0076305582059889646,
+        "relative_rmse": 0.024102641988163746,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    },
+    "key_noise_0.3": {
+      "mean_adjacent_key_cosine": 0.9178851842880249,
+      "key_gate_log_mean": -0.0015017598634585738,
+      "beta_mean": 0.9801090359687805,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.015494944246606857,
+        "relative_rmse": 0.02084025713721362,
+        "passed": true
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.016178838908672333,
+        "relative_rmse": 0.02314525856939746,
+        "passed": true
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.007740817913813702,
+        "relative_rmse": 0.010333748228008137,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    },
+    "independent_keys": {
+      "mean_adjacent_key_cosine": -0.000802792957983911,
+      "key_gate_log_mean": -0.0015017598634585738,
+      "beta_mean": 0.9801090359687805,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.007790808993125176,
+        "relative_rmse": 0.006681319424213281,
+        "passed": true
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.008466318249702454,
+        "relative_rmse": 0.007988208086260258,
+        "passed": true
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.004572809657936272,
+        "relative_rmse": 0.0044795916397147055,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    },
+    "decay_more": {
+      "mean_adjacent_key_cosine": 1.0,
+      "key_gate_log_mean": -0.021501759067177773,
+      "beta_mean": 0.9801090359687805,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.005230099096603,
+        "relative_rmse": 0.01820990167667261,
+        "passed": true
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.005985073745250702,
+        "relative_rmse": 0.023165868102912723,
+        "passed": true
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.003616099643911741,
+        "relative_rmse": 0.01662694526710672,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    },
+    "beta_0.5": {
+      "mean_adjacent_key_cosine": 1.0,
+      "key_gate_log_mean": -0.0015017598634585738,
+      "beta_mean": 0.5,
+      "mega_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.004983271974253883,
+        "relative_rmse": 0.03738247652797297,
+        "passed": true
+      },
+      "mega_vs_fla_state": {
+        "nonfinite": 0,
+        "max_abs": 0.005098335444927216,
+        "relative_rmse": 0.04158511092380345,
+        "passed": true
+      },
+      "fla_vs_cpu_state": {
+        "nonfinite": 0,
+        "max_abs": 0.003192281270172334,
+        "relative_rmse": 0.01877051989142551,
+        "passed": true
+      },
+      "inverse_max": 1.0
+    }
+  }
+}

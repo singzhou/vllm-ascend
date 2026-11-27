@@ -1,0 +1,94 @@
+{
+  "short-0": {
+    "repeated_baseline": {
+      "mean_abs": 0.040476358853853665,
+      "p99_abs": 0.35213708877563477,
+      "max_abs": 0.3739757537841797,
+      "over_1": 0,
+      "scores": 26
+    },
+    "original_vs_restarted_baseline": {
+      "mean_abs": 0.051003492795504056,
+      "p99_abs": 0.47891807556152344,
+      "max_abs": 0.5969581604003906,
+      "over_1": 0,
+      "scores": 26
+    },
+    "mega_vs_original_baseline": {
+      "mean_abs": 0.0816359153160682,
+      "p99_abs": 0.3996453285217285,
+      "max_abs": 0.408294677734375,
+      "over_1": 0,
+      "scores": 26
+    }
+  },
+  "retrieval-512-start": {
+    "repeated_baseline": {
+      "mean_abs": 0.5798937625847684,
+      "p99_abs": 8.35386428833002,
+      "max_abs": 16.71855926513672,
+      "over_1": 65,
+      "scores": 511
+    },
+    "original_vs_restarted_baseline": {
+      "mean_abs": 0.6009998834763021,
+      "p99_abs": 8.423517799377413,
+      "max_abs": 14.930971145629883,
+      "over_1": 78,
+      "scores": 511
+    },
+    "mega_vs_original_baseline": {
+      "mean_abs": 0.573827551302378,
+      "p99_abs": 5.984426689147936,
+      "max_abs": 20.778635025024414,
+      "over_1": 69,
+      "scores": 511
+    }
+  },
+  "retrieval-4096-end": {
+    "repeated_baseline": {
+      "mean_abs": 3.0727630642016437,
+      "p99_abs": 22.352645263671867,
+      "max_abs": 32.04671669006348,
+      "over_1": 2459,
+      "scores": 4095
+    },
+    "original_vs_restarted_baseline": {
+      "mean_abs": 3.051903126615308,
+      "p99_abs": 21.39793399810791,
+      "max_abs": 31.756540298461914,
+      "over_1": 2421,
+      "scores": 4095
+    },
+    "mega_vs_original_baseline": {
+      "mean_abs": 3.1095714784512736,
+      "p99_abs": 22.287336120605463,
+      "max_abs": 31.89772605895996,
+      "over_1": 2477,
+      "scores": 4095
+    }
+  },
+  "retrieval-8192-end": {
+    "repeated_baseline": {
+      "mean_abs": 3.2605186887835864,
+      "p99_abs": 22.779512214660645,
+      "max_abs": 31.62489128112793,
+      "over_1": 5038,
+      "scores": 8191
+    },
+    "original_vs_restarted_baseline": {
+      "mean_abs": 3.2827004639457074,
+      "p99_abs": 23.000743293762252,
+      "max_abs": 35.04638671875,
+      "over_1": 5022,
+      "scores": 8191
+    },
+    "mega_vs_original_baseline": {
+      "mean_abs": 3.4682733559401795,
+      "p99_abs": 23.707761955261248,
+      "max_abs": 33.22607421875,
+      "over_1": 5173,
+      "scores": 8191
+    }
+  }
+}

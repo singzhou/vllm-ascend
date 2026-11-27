@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "case": "capture-2048",
+      "lengths": [
+        2048
+      ],
+      "dtype": "torch.bfloat16",
+      "key_heads": 4,
+      "value_heads": 12,
+      "accuracy": {
+        "mega_vs_cpu_output": {
+          "nonfinite": 132736,
+          "passed": false
+        },
+        "mega_vs_cpu_state": {
+          "nonfinite": 16384,
+          "passed": false
+        },
+        "mega_vs_fla_output": {
+          "nonfinite": 132736,
+          "passed": false
+        },
+        "mega_vs_fla_state": {
+          "nonfinite": 16384,
+          "passed": false
+        },
+        "fla_vs_cpu_output": {
+          "nonfinite": 0,
+          "max_abs": 0.000312702680507846,
+          "relative_rmse": 0.004949747881149391,
+          "passed": true
+        },
+        "fla_vs_cpu_state": {
+          "nonfinite": 0,
+          "max_abs": 0.0013415861466380408,
+          "relative_rmse": 0.002731010846060094,
+          "passed": true
+        }
+      },
+      "inverse": {
+        "nonfinite": 0,
+        "max_abs_error_vs_fp64_solve_of_npu_matrix": 2056191.9968063359,
+        "max_abs_residual": 1596326.7745585442,
+        "max_abs_inverse_entry": 2056192.0,
+        "head_chunks_above_two": 16
+      },
+      "timing": {}
+    }
+  ]
+}

@@ -1,0 +1,352 @@
+[
+  {
+    "capture": "nonfinite-71202.pt",
+    "matrices": 192,
+    "finite_kkt_matrices": 192,
+    "nonfinite_inputs": {
+      "q": 0,
+      "k": 0,
+      "v": 0,
+      "g": 0,
+      "beta": 0,
+      "sequence_offsets": 0,
+      "initial_state": 0
+    },
+    "example": {
+      "chunk": 0,
+      "head": 4,
+      "diagonal_block_start": 32,
+      "diagonal_block_error": 9.81251814930864,
+      "bf16_series_steps": [
+        {
+          "power": 2,
+          "power_max": 11.8125,
+          "intermediate_sum_error": 0.12963229417800903,
+          "sum_max": 61.0,
+          "sum_reference_max": 61.00664031505585
+        },
+        {
+          "power": 4,
+          "power_max": 272.0,
+          "intermediate_sum_error": 1.8040532117856856,
+          "sum_max": 1072.0,
+          "sum_reference_max": 1072.5232757329186
+        },
+        {
+          "power": 8,
+          "power_max": 2080.0,
+          "intermediate_sum_error": 9.812518149308517,
+          "sum_max": 9.8125,
+          "sum_reference_max": 1.0
+        }
+      ]
+    },
+    "reference": {
+      "max_inverse_entry": 1.0,
+      "max_abs_error": 0.0,
+      "p95_matrix_max_abs_error": 0.0,
+      "max_residual": 0.0,
+      "matrices_above_guard_limit": 0,
+      "nonfinite_matrices": 0
+    },
+    "hardware": {
+      "max_inverse_entry": 2056192.0,
+      "max_abs_error": 2056191.9968063359,
+      "p95_matrix_max_abs_error": 32671.9998312789,
+      "max_residual": 1596326.7745585442,
+      "matrices_above_guard_limit": 16,
+      "nonfinite_matrices": 0,
+      "example_entry_max": 593920.0
+    },
+    "variants": {
+      "original_bf16": {
+        "max_inverse_entry": 2056192.0,
+        "max_abs_error": 2056191.9968063359,
+        "p95_matrix_max_abs_error": 32671.9998312789,
+        "max_residual": 1596326.7745585442,
+        "matrices_above_guard_limit": 16,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 593920.0,
+        "example_stages_max_abs_error": {
+          "16": 9.81251814930864,
+          "32": 58.24995092872115,
+          "64": 3024.000153309768,
+          "128": 593919.9957894022
+        },
+        "example_err_vs_npu": 0.0,
+        "matches_npu_matrices": 173
+      },
+      "power_only_fp32": {
+        "max_inverse_entry": 2096.0,
+        "max_abs_error": 2096.00805881337,
+        "p95_matrix_max_abs_error": 43.46461601630493,
+        "max_residual": 2635.30544931069,
+        "matrices_above_guard_limit": 16,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 2096.0,
+        "example_stages_max_abs_error": {
+          "16": 4.534648777540462,
+          "32": 16.628229284168455,
+          "64": 587.999855137097,
+          "128": 2096.00805881337
+        },
+        "example_err_vs_npu": 593468.0
+      },
+      "sum_only_fp32": {
+        "max_inverse_entry": 311296.0,
+        "max_abs_error": 311296.0052055334,
+        "p95_matrix_max_abs_error": 17817.600210566245,
+        "max_residual": 260513.06826031208,
+        "matrices_above_guard_limit": 16,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 224256.0,
+        "example_stages_max_abs_error": {
+          "16": 12.00001814930864,
+          "32": 43.74995092872115,
+          "64": 1520.000153309768,
+          "128": 224256.00021705948
+        },
+        "example_err_vs_npu": 454656.0
+      },
+      "diagonal_series_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.00193023681640625,
+        "p95_matrix_max_abs_error": 0.0013524043347039553,
+        "max_residual": 0.00193023681640625,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0004730224609375,
+          "32": 0.0004773954719148321,
+          "64": 0.0009224033373474985,
+          "128": 0.0009224033373474985
+        },
+        "example_err_vs_npu": 593919.9957885742
+      },
+      "merge_only_fp32": {
+        "max_inverse_entry": 2039808.0,
+        "max_abs_error": 2039807.9968063359,
+        "p95_matrix_max_abs_error": 32716.799831278895,
+        "max_residual": 1578414.8018152416,
+        "matrices_above_guard_limit": 16,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 589824.0,
+        "example_stages_max_abs_error": {
+          "16": 9.81251814930864,
+          "32": 58.439869446787554,
+          "64": 3034.964997059768,
+          "128": 587882.6832894022
+        },
+        "example_err_vs_npu": 4096.0
+      },
+      "stable_diagonal_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.00193023681640625,
+        "p95_matrix_max_abs_error": 0.0013524043347039553,
+        "max_residual": 0.00193023681640625,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0004730224609375,
+          "32": 0.0004773954719148321,
+          "64": 0.0008003330248474985,
+          "128": 0.0008003330248474985
+        },
+        "example_err_vs_npu": 593919.9957885742
+      },
+      "series_and_merge_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.00193023681640625,
+        "p95_matrix_max_abs_error": 0.0010040283203124993,
+        "max_residual": 0.00193023681640625,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0004730224609375,
+          "32": 0.0004730224609375,
+          "64": 0.000938496591436854,
+          "128": 0.000938496591436854
+        },
+        "example_err_vs_npu": 593919.9957885742
+      }
+    }
+  },
+  {
+    "capture": "nonfinite-71200.pt",
+    "matrices": 192,
+    "finite_kkt_matrices": 84,
+    "nonfinite_inputs": {
+      "q": 589824,
+      "k": 589824,
+      "v": 1769472,
+      "g": 13824,
+      "beta": 13824,
+      "sequence_offsets": 0,
+      "initial_state": 0
+    },
+    "example": {
+      "chunk": 0,
+      "head": 10,
+      "diagonal_block_start": 112,
+      "diagonal_block_error": 0.008044819064439913,
+      "bf16_series_steps": [
+        {
+          "power": 2,
+          "power_max": 0.86328125,
+          "intermediate_sum_error": 0.0024033029039856046,
+          "sum_max": 1.0,
+          "sum_reference_max": 1.0
+        },
+        {
+          "power": 4,
+          "power_max": 1.4609375,
+          "intermediate_sum_error": 0.00801091010012045,
+          "sum_max": 1.0,
+          "sum_reference_max": 1.0
+        },
+        {
+          "power": 8,
+          "power_max": 0.06298828125,
+          "intermediate_sum_error": 0.008044819064439906,
+          "sum_max": 1.0,
+          "sum_reference_max": 1.0
+        }
+      ]
+    },
+    "reference": {
+      "max_inverse_entry": 1.0,
+      "max_abs_error": 0.0,
+      "p95_matrix_max_abs_error": 0.0,
+      "max_residual": 0.0,
+      "matrices_above_guard_limit": 0,
+      "nonfinite_matrices": 0
+    },
+    "hardware": {
+      "max_inverse_entry": 1.0,
+      "max_abs_error": 0.008044819064439913,
+      "p95_matrix_max_abs_error": 0.0027818379062188037,
+      "max_residual": 0.006608724594116211,
+      "matrices_above_guard_limit": 0,
+      "nonfinite_matrices": 0,
+      "example_entry_max": 1.0
+    },
+    "variants": {
+      "original_bf16": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.008044819064439913,
+        "p95_matrix_max_abs_error": 0.0027818379062188037,
+        "max_residual": 0.006608724594116211,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.008044819064439913,
+          "32": 0.008044819064439913,
+          "64": 0.008044819064439913,
+          "128": 0.008044819064439913
+        },
+        "example_err_vs_npu": 0.0,
+        "matches_npu_matrices": 72
+      },
+      "power_only_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.0041437369180169995,
+        "p95_matrix_max_abs_error": 0.0017277530003699726,
+        "max_residual": 0.0041007399559021,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0018574255518615246,
+          "32": 0.0018574255518615246,
+          "64": 0.0018574255518615246,
+          "128": 0.0018574255518615246
+        },
+        "example_err_vs_npu": 0.0068359375
+      },
+      "sum_only_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.006579975314439913,
+        "p95_matrix_max_abs_error": 0.001861776399748246,
+        "max_residual": 0.005280017852783203,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.006579975314439913,
+          "32": 0.006579975314439913,
+          "64": 0.006579975314439913,
+          "128": 0.006579975314439913
+        },
+        "example_err_vs_npu": 0.001953125
+      },
+      "diagonal_series_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.0018574255518615246,
+        "p95_matrix_max_abs_error": 0.0016642798266481573,
+        "max_residual": 0.0018609166145324707,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0018574255518615246,
+          "32": 0.0018574255518615246,
+          "64": 0.0018574255518615246,
+          "128": 0.0018574255518615246
+        },
+        "example_err_vs_npu": 0.008056640625
+      },
+      "merge_only_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.008044819064439913,
+        "p95_matrix_max_abs_error": 0.0027818379062188037,
+        "max_residual": 0.006608724594116211,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.008044819064439913,
+          "32": 0.008044819064439913,
+          "64": 0.008044819064439913,
+          "128": 0.008044819064439913
+        },
+        "example_err_vs_npu": 0.0009765625
+      },
+      "stable_diagonal_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.0018574255518615246,
+        "p95_matrix_max_abs_error": 0.0016642798266481573,
+        "max_residual": 0.0018609166145324707,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0018574255518615246,
+          "32": 0.0018574255518615246,
+          "64": 0.0018574255518615246,
+          "128": 0.0018574255518615246
+        },
+        "example_err_vs_npu": 0.008056640625
+      },
+      "series_and_merge_fp32": {
+        "max_inverse_entry": 1.0,
+        "max_abs_error": 0.0018574255518615246,
+        "p95_matrix_max_abs_error": 0.0013789594173431385,
+        "max_residual": 0.0018609166145324707,
+        "matrices_above_guard_limit": 0,
+        "nonfinite_matrices": 0,
+        "example_entry_max": 1.0,
+        "example_stages_max_abs_error": {
+          "16": 0.0018574255518615246,
+          "32": 0.0018574255518615246,
+          "64": 0.0018574255518615246,
+          "128": 0.0018574255518615246
+        },
+        "example_err_vs_npu": 0.008056640625
+      }
+    }
+  }
+]

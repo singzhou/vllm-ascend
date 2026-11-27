@@ -1,0 +1,1070 @@
+[
+  {
+    "concurrency": 4,
+    "trial": 1,
+    "case": "retrieval-512-start",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 1,
+    "case": "retrieval-2048-end",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 1,
+    "case": "retrieval-4096-start",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 1,
+    "case": "retrieval-8192-end",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 2,
+    "case": "retrieval-512-start",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 2,
+    "case": "retrieval-2048-end",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 2,
+    "case": "retrieval-4096-start",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 4,
+    "trial": 2,
+    "case": "retrieval-8192-end",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-0",
+    "tokens": 27,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        24,
+        20,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        24,
+        20,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-1",
+    "tokens": 31,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        15,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        15,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-2",
+    "tokens": 37,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        75219,
+        633,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        75219,
+        633,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-3",
+    "tokens": 24,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        290,
+        90594,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        290,
+        90594,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-6",
+    "tokens": 36,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        110799,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        110799,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "short-11",
+    "tokens": 26,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        100035,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        100035,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-512-start",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-512-end",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-2048-start",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-2048-end",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-4096-start",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-4096-end",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-8192-start",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-8192-end",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-12288-start",
+    "tokens": 12288,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 1,
+    "case": "retrieval-12288-end",
+    "tokens": 12288,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-0",
+    "tokens": 27,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        24,
+        20,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        24,
+        20,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-1",
+    "tokens": 31,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        15,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        15,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-2",
+    "tokens": 37,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        75219,
+        633,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        75219,
+        633,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-3",
+    "tokens": 24,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        290,
+        90594,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        290,
+        90594,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-6",
+    "tokens": 36,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        110799,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        110799,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "short-11",
+    "tokens": 26,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        100035,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        100035,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-512-start",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-512-end",
+    "tokens": 512,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-2048-start",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-2048-end",
+    "tokens": 2048,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-4096-start",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-4096-end",
+    "tokens": 4096,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-8192-start",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-8192-end",
+    "tokens": 8192,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-12288-start",
+    "tokens": 12288,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  },
+  {
+    "concurrency": 16,
+    "trial": 2,
+    "case": "retrieval-12288-end",
+    "tokens": 12288,
+    "tokens_equal": true,
+    "baseline_correct": true,
+    "mega_correct": true,
+    "baseline": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    },
+    "mega": {
+      "tokens": [
+        19,
+        22,
+        248046
+      ],
+      "teacher_scores": null,
+      "finish_reason": "stop"
+    }
+  }
+]
