@@ -374,7 +374,11 @@ class AscendDSparkProposer(AscendDflashProposer):
         is_profile=False,
         **kwargs,
     ) -> None:
-        num_query_total = num_reqs * self.num_query_per_req
+        self._last_draft_probs = None
+        # A K=0 real step still needs a non-empty model forward on an idle DP
+        # rank. Run the backbone only, without manufacturing draft proposals.
+        dummy_query_per_req = max(self.num_speculative_tokens, 1) + (not self.sample_from_anchor)
+        num_query_total = num_reqs * dummy_query_per_req
         num_query_tokens = min(num_query_total if num_reqs > 0 else num_tokens, self.max_query_tokens)
 
         (
@@ -408,7 +412,7 @@ class AscendDSparkProposer(AscendDflashProposer):
                 self.runner.eplb_heat_collection_status if self.runner.dynamic_eplb else False
             ),
         ):
-            if is_profile:
+            if is_profile or self.num_speculative_tokens == 0:
                 self.model.precompute_and_store_context_kv(context_states, context_positions)
                 self.model(
                     input_ids=self.input_ids[:num_query_total],

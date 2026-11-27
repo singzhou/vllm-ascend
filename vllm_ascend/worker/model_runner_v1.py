@@ -2968,6 +2968,35 @@ class NPUModelRunner(GPUModelRunner):
         )
         return async_output
 
+    def _get_spec_decode_draft_probs(self, spec_decode_metadata: SpecDecodeMetadata) -> torch.Tensor | None:
+        if self.speculative_config is None or self.speculative_config.method != "dspark":
+            return super()._get_spec_decode_draft_probs(spec_decode_metadata)
+        cached_probs = self._draft_probs
+        if cached_probs is None or self._draft_prob_req_ids is None:
+            return None
+        if cached_probs.shape[-1] != self.input_batch.vocab_size:
+            # An incompatible cache cannot be passed to the target-vocab sampler.
+            return None
+        total_drafts = sum(spec_decode_metadata.num_draft_tokens)
+        if total_drafts == 0:
+            return None
+
+        row_by_req_id = {req_id: index for index, req_id in enumerate(self._draft_prob_req_ids)}
+        # Missing requests/steps keep zero q: force rejection and recover from
+        # (p - 0)+ = p, without discarding other requests' cached probabilities.
+        draft_probs = cached_probs.new_zeros((total_drafts, cached_probs.shape[-1]))
+        offset = 0
+        for req_id, num_draft in zip(self.input_batch.req_ids, spec_decode_metadata.num_draft_tokens):
+            row_index = row_by_req_id.get(req_id)
+            if row_index is not None and row_index < cached_probs.shape[0]:
+                available = min(num_draft, cached_probs.shape[1])
+                draft_probs[offset : offset + available].copy_(cached_probs[row_index, :available])
+            offset += num_draft
+        # Placeholders are rejected before candidate lookup. Their recovery
+        # distribution must be p even if the request happened to have a cache.
+        draft_probs.masked_fill_(spec_decode_metadata.draft_token_ids.eq(-1).unsqueeze(-1), 0)
+        return draft_probs
+
     # overwrite _sample for lmhead_tp_enable and need_accepted_tokens
     def _sample(self, logits, spec_decode_metadata):
         # Sample the next token and get logprobs if needed.

@@ -828,6 +828,26 @@
 #       Remove this patch once upstream vLLM adds the terminal short-circuit
 #       to the outlines backend.
 #
+# ** 20a. File: platform/patch_dspark_structured_output.py**
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#   1. `vllm.v1.structured_output.StructuredOutputManager.validate_tokens`
+#      `vllm.v1.structured_output.StructuredOutputManager.grammar_bitmask`
+#    Why:
+#       Truncating probabilistic DSpark drafts before the first grammar-invalid
+#       proposal bypasses its p/q rejection and samples p instead of (p-q)+,
+#       biasing synchronous structured outputs.
+#    How:
+#       For V1 DSpark with standard probabilistic drafting, retain that proposal
+#       and its cached q. Generate its prefix grammar mask without advancing
+#       through it by passing padding only in a mask-generation copy. The real
+#       proposal reaches rejection sampling with p(x)=0 and the correct residual.
+#       Other drafting modes and the grammar rollback contract are unchanged.
+#    Related PR (if no, explain why):
+#       No upstream PR; fixes the Ascend V1 probabilistic DSpark integration.
+#    Future Plan:
+#       Remove when upstream retains the first rejected proposal and generates
+#       its mask without truncating the proposal used by rejection sampling.
+#
 # ** 21. File: platform/patch_torch_accelerator.py**
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #   1. `torch.accelerator.memory_stats`, `torch.accelerator.memory_reserved`,

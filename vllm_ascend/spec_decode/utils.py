@@ -452,7 +452,8 @@ class DynamicSpecScheduler:
         Output:
             token_probs: [B, D]
         """
-        num_draft_tokens = self.num_speculative_tokens
+        num_draft_tokens = draft_token_ids.shape[1] - 1
+        self.num_speculative_tokens = num_draft_tokens
         num_tokens = num_reqs * num_draft_tokens
 
         flat_hidden = last_hidden_states.reshape(
@@ -481,7 +482,7 @@ class DynamicSpecScheduler:
             flat_markov,
         )
 
-        token_probs = self._token_probs_buffer[:num_reqs]
+        token_probs = self._token_probs_buffer[:num_reqs, :num_draft_tokens]
 
         token_probs.copy_(
             confidence.reshape(
@@ -504,7 +505,7 @@ class DynamicSpecScheduler:
         """Run the shared dynamic speculative scheduling pipeline."""
         num_reqs, num_draft_tokens = token_probs.shape
 
-        survival = self._survival_buffer[:num_reqs]
+        survival = self._survival_buffer[:num_reqs, :num_draft_tokens]
 
         # survival[b, i] estimates the probability that request b reaches
         # and accepts the draft prefix through position i.
